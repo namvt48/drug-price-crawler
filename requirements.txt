@@ -1,0 +1,11 @@
+httpx[http2]==0.27.2
+selectolax==0.3.21
+pydantic==2.9.2
+tenacity==9.0.0
+pyyaml==6.0.2
+rapidfuzz==3.14.5
+openpyxl==3.1.5
+pycryptodome==3.23.0   # thuocsi.vn mã hoá giá AES-CBC phía client — xem crawlers/b2b/thuocsi.py
+
+# Chỉ dùng khi build .exe (Windows):
+# pyinstaller==6.10.0

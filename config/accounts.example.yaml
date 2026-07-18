@@ -1,0 +1,52 @@
+# =============================================================================
+# Drug Price Crawler — Account & Site Configuration (EXAMPLE)
+# =============================================================================
+# Copy file này thành `config/accounts.yaml` và điền credentials thật.
+# `config/accounts.yaml` đã nằm trong .gitignore — KHÔNG commit mật khẩu.
+# Xem cấu trúc đầy đủ + chú thích trong docs/ và trong accounts.yaml gốc.
+# =============================================================================
+
+defaults:
+  cache:
+    enabled: true
+    ttl_hours: 24
+  auth:
+    expiry_hours: 12
+    retry_on_401: true
+    max_auth_retries: 3
+  rate_limit:
+    delay_seconds: 2
+    max_retries: 3
+    retry_backoff_seconds: 5
+  user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+
+sites:
+  giathuoctot:
+    enabled: true
+    name: "Giá Thuốc Tốt"
+    base_url: "https://www.giathuoctot.com"
+    login_url: "https://www.giathuoctot.com/login"
+    search_url: "https://www.giathuoctot.com/quick-order?page=1&searchTerm={keyword}"
+    credentials:
+      username: "YOUR_PHONE"
+      password: "YOUR_PASSWORD"
+    auth:
+      method: form_login
+      session_key: "session_id"
+    # ... 8 site còn lại tương tự (xem docs/)
+
+# --- Whitelist filter (tùy chọn) — chỉ giữ bản ghi khớp; danh sách rỗng = không lọc.
+# So khớp không phân biệt hoa thường / có dấu. CLI --manufacturer/--contains ghi đè.
+filters:
+  name_keywords: []        # vd: ["boganic", "paracetamol"]
+  manufacturers: []        # vd: ["Traphaco", "Sanofi"]
+  min_price_vnd: 0         # 0 = không giới hạn
+  max_price_vnd: 0         # 0 = không giới hạn
+
+# --- Watchlist (theo dõi giá định kỳ) — crawl catalog 1 lần, refresh giá mỗi N phút.
+# catalog_ttl_hours chỉ áp dụng cho catalog (tên+SKU, KHÔNG có giá, dùng để search
+# gợi ý). Giá luôn fetch live tại thời điểm user chọn (engine.fetch_live_prices),
+# nên TTL này để dài (30 ngày mặc định) — tên/SKU sản phẩm ít đổi.
+watchlist:
+  refresh_interval_minutes: 10   # chu kỳ refresh giá watchlist
+  catalog_ttl_hours: 720          # 30 ngày — TTL catalog trước khi crawl lại

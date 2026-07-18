@@ -1,0 +1,48 @@
+# --- Secrets (CRITICAL: chứa mật khẩu 9 tài khoản B2B) ---
+config/accounts.yaml
+
+# --- Output & cache (runtime, không commit) ---
+output/
+*.csv
+*.db
+*.db-wal
+*.db-shm
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# --- PyInstaller build ---
+build/
+dist/
+*.spec.bak
+
+# --- Temp reverse-engineering scripts ---
+tmp_pw_*.js
+
+# --- IDE / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Mutation testing artifacts ---
+mutants/
+
+# --- Trial state (runtime) ---
+trial.dat
+
+# --- License key (runtime, machine-locked) ---
+license.key
+
+# --- Excel output ---
+*.xlsx
+
+# --- Test/coverage artifacts ---
+.coverage
+.pytest_cache/
+htmlcov/

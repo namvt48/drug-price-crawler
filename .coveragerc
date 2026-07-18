@@ -1,0 +1,15 @@
+[run]
+omit =
+    gui/main_window.py
+    main.py
+    tests/*
+    */__init__.py
+    build*.py
+    build.spec
+    mutants/*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if __name__ == .__main__.:
+    raise NotImplementedError

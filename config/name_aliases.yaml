@@ -1,0 +1,23 @@
+# =============================================================================
+# Drug Price Crawler — Name Aliases (Manual Override)
+# =============================================================================
+# File này ép gom/tách tên thuốc thủ công, đè lên thuật toán tự động.
+#
+# Cấu trúc: mỗi key là tên canonical (viết tuỳ ý), value là list các tên gốc
+# biến thể. Khi một tên gốc khớp (case-insensitive, trimmed) với một biến thể,
+# canonical_name của nó = key tương ứng.
+#
+# Sửa file này để:
+#   - Gom các biến thể mà thuật toán tự động chưa gom được.
+#   - Tách các biến thể mà thuật toán tự động gom nhầm.
+#
+# Ví dụ (bỏ # để bật):
+#
+# "Boganic Bao Duong Traphaco":
+#   - "Boganic hộp 5 vỉ x 20 viên nén bao đường Traphaco"
+#   - "Boganic Nén Bao Đường Traphaco (H/100V)"
+#   - "Boganic bao duong H/5 vi x 20v Traphaco"
+#
+# Để trống (không có entry nào) → thuật toán tự động được dùng toàn bộ.
+# =============================================================================
+{}

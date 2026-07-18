@@ -1,0 +1,36 @@
+name: Build Windows exe
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller==6.10.0
+
+      - name: Build exe
+        run: pyinstaller build.spec --noconfirm
+
+      - name: Stage config example next to exe
+        run: |
+          mkdir dist\config
+          copy config\accounts.example.yaml dist\config\accounts.yaml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DrugPriceCrawler-windows
+          path: |
+            dist/DrugPriceCrawler.exe
+            dist/config/accounts.yaml
