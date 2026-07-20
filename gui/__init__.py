@@ -1,1 +1,1 @@
-"""GUI tkinter cho Drug Price Crawler."""
+"""GUI tkinter cho PharmaPrice."""

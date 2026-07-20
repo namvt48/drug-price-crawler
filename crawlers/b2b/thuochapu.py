@@ -9,6 +9,7 @@ Giá dạng "48.000" (dấu chấm ngăn nghìn). Link sản phẩm: /thuoc/{slu
 
 from __future__ import annotations
 
+import json
 import re
 
 import httpx
@@ -26,6 +27,13 @@ _PRICE_TEXT = re.compile(r"^[\d.]{3,}$")
 
 class ThuocHaPuCrawler(BaseCrawler):
     source_name = SourceName.THUOCHAPU
+    # search.html BỎ QUA `filter_search` — luôn trả nguyên trang đầu catalog dù
+    # tìm gì (xác nhận sống 2026-07-20). Vì vậy KHÔNG dùng keyword search để tra
+    # giá theo tên: luồng CLI crawl toàn catalog rồi lọc tại chỗ; luồng GUI (chọn
+    # 1 sản phẩm) gọi fetch_price_by_id() đọc giá từ trang chi tiết. Nếu để True,
+    # GUI search "Alaxan" nhận nhầm trang đầu (3B...) → mọi sản phẩm hiện chung
+    # 1 giá (48.000 của sản phẩm đầu).
+    keyword_search_supported = False
 
     def _is_auth_error(self, resp: httpx.Response) -> bool:
         loc = resp.headers.get("location", "")
@@ -95,33 +103,37 @@ class ThuocHaPuCrawler(BaseCrawler):
 
     @staticmethod
     def _parse_listing(html: str) -> list[dict]:
-        """Ghép link sản phẩm (/thuoc/*.html) với giá theo thứ tự tài liệu.
+        """Ghép link sản phẩm (/thuoc/*.html) với giá THEO TỪNG CARD.
 
-        Cấu trúc thuochapu: <a> tên và <b> giá nằm ở div khác nhau nên không
-        cùng parent. Cách bền nhất khi không có DOM đầy đủ: gom link + gom giá
-        theo document-order rồi zip 1-1.
+        Mỗi sản phẩm nằm trong 1 card `div.t3-medicine` chứa đúng 1 link
+        `/thuoc/` và 1 `<b>` giá. Trước đây code gom toàn bộ link + toàn bộ
+        `<b>` rồi zip 1-1 theo document-order; nhưng trang còn có `<b>` rác
+        (vd bộ đếm tổng sản phẩm "2646" ở header) khớp regex giá → lọt vào
+        đầu danh sách và đẩy LỆCH toàn bộ giá đi 1 ô (mọi sản phẩm nhận nhầm
+        giá của sản phẩm khác). Duyệt theo card `.t3-medicine` loại bỏ hẳn
+        rủi ro này vì `<b>` rác nằm ngoài mọi card.
         """
         tree = HTMLParser(html)
 
         seen: set[str] = set()
-        links: list[dict] = []
-        for a in tree.css('a[href*="/thuoc/"]'):
-            href = a.attributes.get("href", "") or ""
-            name = a.text(strip=True)
-            if href and name and href not in seen:
-                seen.add(href)
-                img = a.css_first("img")
-                img_src = (img.attributes.get("src", "") or "") if img else ""
-                links.append({"name": name, "url": href, "image": img_src})
-
-        price_nodes = [
-            b.text(strip=True) for b in tree.css("b") if _PRICE_TEXT.match(b.text(strip=True))
-        ]
-
         items: list[dict] = []
-        for i, link in enumerate(links):
-            price = price_nodes[i] if i < len(price_nodes) else ""
-            items.append({**link, "price": price})
+        for card in tree.css("div.t3-medicine"):
+            anchors = card.css('a[href*="/thuoc/"]')
+            if not anchors:
+                continue
+            href = anchors[0].attributes.get("href", "") or ""
+            name = next((t for a in anchors if (t := a.text(strip=True))), "")
+            if not href or not name or href in seen:
+                continue
+            seen.add(href)
+
+            price = next(
+                (t for b in card.css("b") if _PRICE_TEXT.match(t := b.text(strip=True))),
+                "",
+            )
+            img = card.css_first("img")
+            img_src = (img.attributes.get("src", "") or "") if img else ""
+            items.append({"name": name, "url": href, "image": img_src, "price": price})
         return items
 
     def _parse_product(self, raw: dict) -> DrugPrice | None:
@@ -138,3 +150,47 @@ class ThuocHaPuCrawler(BaseCrawler):
             product_id=url,
             image_url=image_url,
         )
+
+    async def fetch_price_by_id(self, product_id: str) -> DrugPrice | None:
+        """Giá LIVE cho đúng 1 sản phẩm — GET trang chi tiết, đọc JSON-LD
+        schema.org/Offer. Dùng cho luồng GUI (chọn 1 sản phẩm): search.html BỎ
+        QUA keyword nên không tra giá theo tên được; trang chi tiết mới là nguồn
+        giá chính xác từng SKU (vd Alaxan = 110.000, không phải 48.000 của trang
+        đầu). `product_id` = URL trang chi tiết (catalog lưu sẵn full URL)."""
+        if not product_id:
+            return None
+        url = product_id if product_id.startswith("http") else f"{BASE}/{product_id.lstrip('/')}"
+        await self.ensure_auth()
+        resp = await self.request_with_retry("GET", url)
+        return self._parse_detail(resp.text, url)
+
+    def _parse_detail(self, html: str, url: str) -> DrugPrice | None:
+        tree = HTMLParser(html)
+        for script in tree.css('script[type="application/ld+json"]'):
+            try:
+                # strict=False: JSON-LD của thuochapu có ký tự xuống dòng THÔ
+                # trong `description` (control char) — json.loads mặc định ném
+                # lỗi, strict=False cho phép.
+                data = json.loads(script.text() or "", strict=False)
+            except (ValueError, TypeError):
+                continue
+            for entry in data if isinstance(data, list) else [data]:
+                if not isinstance(entry, dict) or entry.get("@type") != "Product":
+                    continue
+                offers = entry.get("offers") or {}
+                if isinstance(offers, list):
+                    offers = offers[0] if offers else {}
+                price = parse_price(offers.get("price") if isinstance(offers, dict) else 0)
+                image = entry.get("image") or ""
+                if isinstance(image, list):
+                    image = image[0] if image else ""
+                return DrugPrice(
+                    drug_name=entry.get("name", "") or "",
+                    price_vnd=price,
+                    price_display=format_price(price),
+                    source=self.source_name,
+                    source_url=url,
+                    product_id=url,
+                    image_url=image if isinstance(image, str) else "",
+                )
+        return None

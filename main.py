@@ -72,7 +72,7 @@ def main() -> int:
 
         root = tk.Tk()
         root.withdraw()
-        messagebox.showinfo("Drug Price Crawler", trial.message)
+        messagebox.showinfo("PharmaPrice", trial.message)
         root.destroy()
 
     from gui.main_window import MainWindow

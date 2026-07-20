@@ -14,6 +14,9 @@ block_cipher = None
 # file .tcl/.png riêng (sv.tcl, theme/light.tcl, spritesheet_light.png...),
 # không nằm trong .py nên PyInstaller không tự thấy, phải khai báo thủ công.
 datas = collect_data_files('sv_ttk')
+# Icon viên nang cho cửa sổ lúc chạy (tk.PhotoImage) — bundle vào .exe, đọc qua
+# sys._MEIPASS (xem gui/main_window._set_window_icon).
+datas += [('assets/pill.png', 'assets')]
 
 a = Analysis(
     ['main.py'],
@@ -39,7 +42,8 @@ exe = EXE(
     a.zipfiles,
     a.datas,
     [],
-    name='DrugPriceCrawler',
+    name='PharmaPrice',
+    icon='assets/pill.ico',   # icon file .exe (taskbar / Explorer)
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -247,25 +247,41 @@ class TestThuocHaPu:
             if p == "/login.html" and req.method == "POST":
                 return httpx.Response(302, headers={"location": "/"})
             if p == "/search.html":
+                # DOM thật: mỗi sản phẩm là 1 card `div.t3-medicine`; header
+                # trang có `<b>2646</b>` (bộ đếm tổng sản phẩm) khớp regex giá.
+                # Regression: card-based parse phải bỏ qua node rác này thay vì
+                # đẩy lệch giá đi 1 ô.
                 return httpx.Response(
                     200,
-                    text='<html>'
+                    text='<html><b>2646</b>'
+                    '<div class="t3-medicine">'
+                    '<div class="t3-name">'
                     '<a href="/thuoc/boganic.html"><img src="/images/boganic.jpg">Boganic</a>'
-                    '<b>48.000</b>'
+                    '</div><b>48.000</b><small>/Hộp</small>'
+                    '</div>'
+                    '<div class="t3-medicine">'
+                    '<a href="/thuoc/alaxan.html">Alaxan</a><b>110.000</b>'
+                    '</div>'
                     '</html>',
                 )
             return httpx.Response(404)
 
         _run(c.open())
         _attach(c, handler)
+        # crawl() không lọc keyword (việc đó ở engine) -> trả cả 2 card.
         results = _run(c.crawl("boganic"))
-        assert len(results) == 1
-        dp = results[0]
+        assert len(results) == 2
+        by_id = {dp.product_id: dp for dp in results}
+
+        # Boganic phải giữ đúng giá 48.000 (không bị "2646" đẩy lệch sang).
+        dp = by_id["/thuoc/boganic.html"]
         assert dp.drug_name == "Boganic"
         assert dp.price_vnd == 48000
         assert dp.source_url == "/thuoc/boganic.html"
-        assert dp.product_id == "/thuoc/boganic.html"
         assert dp.image_url == "https://thuochapu.com/images/boganic.jpg"
+
+        # Alaxan (card thứ 2) nhận đúng giá của chính nó, không lệch.
+        assert by_id["/thuoc/alaxan.html"].price_vnd == 110000
         _run(c.close())
 
     def test_crawl_all_pagination(self) -> None:
@@ -282,7 +298,10 @@ class TestThuocHaPu:
             if req.url.path == "/danh-muc.html":
                 return httpx.Response(
                     200,
-                    text='<html><a href="/thuoc/x.html">X</a><b>10.000</b></html>',
+                    text='<html><b>2646</b>'
+                    '<div class="t3-medicine">'
+                    '<a href="/thuoc/x.html">X</a><b>10.000</b>'
+                    '</div></html>',
                 )
             return httpx.Response(404)
 
@@ -291,6 +310,7 @@ class TestThuocHaPu:
         # Empty keyword -> crawl all path.
         items = _run(c._fetch_products(""))
         assert len(items) == 1
+        assert items[0]["price"] == "10.000"  # không bị "2646" đẩy lệch
         _run(c.close())
 
     def test_no_token_raises_auth_error(self) -> None:
@@ -321,6 +341,54 @@ class TestThuocHaPu:
         html = '<input type="hidden" name="abcdef0123456789abcdef0123456789" value="1">'
         assert ThuocHaPuCrawler._extract_joomla_token(html) == "abcdef0123456789abcdef0123456789"
         assert ThuocHaPuCrawler._extract_joomla_token("<html></html>") == ""
+
+    def test_keyword_search_disabled(self) -> None:
+        """search.html bỏ qua keyword → phải để keyword_search_supported=False,
+        buộc GUI dùng fetch_price_by_id thay vì search theo tên (nếu không, mọi
+        sản phẩm nhận nhầm giá trang đầu)."""
+        from crawlers.b2b.thuochapu import ThuocHaPuCrawler
+
+        assert ThuocHaPuCrawler.keyword_search_supported is False
+
+    def test_fetch_price_by_id_reads_detail_jsonld(self) -> None:
+        """Giá LIVE lấy từ JSON-LD trang chi tiết (đúng SKU), KHÔNG từ search.
+        JSON-LD của thuochapu có xuống dòng THÔ trong `description` — parse phải
+        chịu được (json.loads strict=False), nếu không giá về None."""
+        from crawlers.b2b.thuochapu import ThuocHaPuCrawler
+
+        c = ThuocHaPuCrawler(_cfg("thuochapu", "https://thuochapu.com"))
+        token_hash = "a" * 32
+        # description cố tình chứa newline thô (control char) như site thật.
+        detail = (
+            '<html><script type="application/ld+json">'
+            '{"@context":"https://schema.org/","@type":"Product",'
+            '"name":"Alaxan 10 vỉ x 10 viên/hộp",'
+            '"image":"https://thuochapu.com/images/medicine/alaxan-united.jpg",'
+            '"description":"Dòng 1\nDòng 2 xuống dòng thô",'
+            '"offers":{"@type":"Offer","price":"110000","priceCurrency":"VND"}}'
+            "</script></html>"
+        )
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            p = req.url.path
+            if p == "/login.html" and req.method == "GET":
+                return httpx.Response(
+                    200, text=f'<html><input type="hidden" name="{token_hash}" value="1"></html>'
+                )
+            if p == "/login.html" and req.method == "POST":
+                return httpx.Response(302, headers={"location": "/"})
+            if p == "/thuoc/alaxan-united.html":
+                return httpx.Response(200, text=detail)
+            return httpx.Response(404)
+
+        _run(c.open())
+        _attach(c, handler)
+        dp = _run(c.fetch_price_by_id("https://thuochapu.com/thuoc/alaxan-united.html"))
+        assert dp is not None
+        assert dp.price_vnd == 110000
+        assert dp.drug_name == "Alaxan 10 vỉ x 10 viên/hộp"
+        assert dp.product_id == "https://thuochapu.com/thuoc/alaxan-united.html"
+        _run(c.close())
 
 
 # =====================================================================
@@ -854,13 +922,40 @@ class TestThuocSiSaiGon:
                     text='<html><input name="authenticity_token" value="AUTH_TOK"></html>',
                 )
             if req.url.path == "/account/login" and req.method == "POST":
-                return httpx.Response(200)
+                return httpx.Response(302, headers={"location": "/"})
             return httpx.Response(404)
 
         _run(c.open())
         _attach(c, handler)
         _run(c._login())
         assert c._authenticated is False or True
+        _run(c.close())
+
+    def test_login_failure_200_raises_auth_error(self) -> None:
+        """Haravan trả HTTP 200 (render lại trang login + node `.errors`) khi sai
+        tài khoản/mật khẩu — KHÔNG đổi status. Bản cũ coi 200 là OK nên login sai
+        bị nuốt im lặng → crawl như khách → mọi giá = 0. Phải fail loud với đúng
+        thông báo server."""
+        from crawlers.b2b.thuocsisaigon import ThuocSiSaiGonCrawler
+
+        c = ThuocSiSaiGonCrawler(_cfg("thuocsisaigon"))
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            if req.url.path == "/account/login" and req.method == "GET":
+                return httpx.Response(
+                    200, text='<html><input name="__RequestVerificationToken" value="RV"></html>'
+                )
+            if req.url.path == "/account/login" and req.method == "POST":
+                return httpx.Response(
+                    200,
+                    text='<html><div class="errors">Thông tin đăng nhập không hợp lệ.</div></html>',
+                )
+            return httpx.Response(404)
+
+        _run(c.open())
+        _attach(c, handler)
+        with pytest.raises(AuthError, match="không hợp lệ"):
+            _run(c._login())
         _run(c.close())
 
 

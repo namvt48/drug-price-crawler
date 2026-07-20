@@ -118,25 +118,32 @@ Tổng: 14 trang × 60 sản phẩm = ~840 sản phẩm
 
 ### 3.2. HTML Structure (product listing)
 
-Mỗi sản phẩm trong HTML có cấu trúc:
+Mỗi sản phẩm là **một card `div.t3-medicine`** chứa đúng 1 link `/thuoc/` và
+1 `<b>` giá:
 
 ```html
-<a href="https://thuochapu.com/thuoc/3b-phuc-vinh.html">
-    Vitamin 3B Gold Phúc Vinh (Hộp 10 vỉ x 10 viên)
-</a>
-</div>
-<div class="w3-blue w3-row t3-relative">
-    <div class="w3-left t3-btn-padding">
-        <b>48.000</b><small class='w3-text-dark'>/Hộp</small>
+<div class="t3-medicine w3-white ...">
+    <div class="t3-name">
+        <a href="https://thuochapu.com/thuoc/3b-phuc-vinh.html">
+            Vitamin 3B Gold Phúc Vinh (Hộp 10 vỉ x 10 viên)
+        </a>
     </div>
+    <b>48.000</b><small class='w3-text-dark'>/Hộp</small>
 </div>
 ```
 
-**Parse logic**:
+**Parse logic (BẮT BUỘC duyệt theo card)**:
 ```python
-# Tìm tất cả <a href="...thuoc/...html"> → product name + URL
-# Trong div kế tiếp: <b>XX.XXX</b> → price, <small>/Unit</small> → unit
+# Duyệt từng div.t3-medicine → mỗi card: <a href=".../thuoc/..."> = name+URL,
+# <b>XX.XXX</b> đầu tiên trong card = price, <small>/Unit</small> = unit.
 ```
+
+> ⚠️ **KHÔNG gom toàn bộ `<a>` + toàn bộ `<b>` rồi zip 1-1 theo document-order.**
+> Trang có node rác `<b>2646</b>` (bộ đếm tổng sản phẩm ở header) khớp regex
+> giá → lọt vào đầu danh sách và **đẩy lệch TOÀN BỘ giá đi 1 ô** (mọi sản phẩm
+> nhận nhầm giá của sản phẩm khác). Bug này từng khiến Alaxan hiển thị 2.646đ
+> thay vì 110.000đ. Duyệt theo card `.t3-medicine` loại bỏ hẳn rủi ro vì `<b>`
+> rác nằm ngoài mọi card. (fix 2026-07-20 — `crawlers/b2b/thuochapu.py`)
 
 ### 3.3. Search
 
@@ -148,6 +155,15 @@ Cookie: <session cookies>
 **Response**: HTML với "Danh sách N thuốc đã được tìm thấy cho từ khóa '...'"
 
 > **Lưu ý**: Search không có pagination — trả tất cả kết quả trong 1 trang.
+
+> ⚠️ **`filter_search` BỊ BỎ QUA (CRITICAL, xác nhận sống 2026-07-20)**: dù truyền
+> keyword gì, server vẫn trả **nguyên trang đầu catalog** (60 sp đầu theo alphabet,
+> bắt đầu bằng "Vitamin 3B..."). KHÔNG dùng search để tra giá theo tên. Hệ quả từng
+> gặp: GUI search "Alaxan" nhận trang đầu → lọc theo product_id không khớp → fallback
+> lấy tất cả → **mọi sản phẩm hiện chung giá 48.000** (giá sp đầu). Vì vậy crawler đặt
+> `keyword_search_supported = False`: CLI crawl toàn catalog rồi lọc tại chỗ; GUI (chọn
+> 1 sp) gọi `fetch_price_by_id(url)` đọc giá từ JSON-LD trang chi tiết (§3.4). Lưu ý
+> JSON-LD có xuống dòng THÔ trong `description` → phải `json.loads(..., strict=False)`.
 
 ### 3.4. Product Detail Page
 
@@ -271,24 +287,23 @@ html = GET(url, cookies=session_cookies)
 ### 6.3. HTML Parse Strategy
 
 ```python
-# Listing page parse:
+# Listing page parse — DUYỆT THEO CARD (xem cảnh báo §3.2):
 from selectolax.parser import HTMLParser
 
 tree = HTMLParser(html)
 products = []
 
-for node in tree.css('a[href*="thuoc/"]'):
-    name = node.text(strip=True)
-    url = node.attributes.get('href', '')
+for card in tree.css('div.t3-medicine'):
+    a = card.css_first('a[href*="/thuoc/"]')
+    if a is None:
+        continue
+    name = a.text(strip=True)
+    url = a.attributes.get('href', '')
 
-    # Tìm price trong sibling div
-    parent = node.parent
-    price_node = parent.css_first('b')
-    if price_node:
-        price_text = price_node.text(strip=True)  # "48.000"
-        price_vnd = int(price_text.replace('.', ''))
+    price_node = card.css_first('b')          # <b> nằm TRONG card → không lệch
+    price_vnd = int(price_node.text(strip=True).replace('.', '')) if price_node else 0
 
-    unit_node = parent.css_first('small')
+    unit_node = card.css_first('small')
     unit = unit_node.text(strip=True).replace('/', '') if unit_node else ""
 
     products.append({'name': name, 'price': price_vnd, 'url': url, 'unit': unit})

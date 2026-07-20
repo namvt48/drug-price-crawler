@@ -1,4 +1,4 @@
-"""MainWindow — GUI tkinter cho Drug Price Crawler.
+"""MainWindow — GUI tkinter cho PharmaPrice.
 
 Ví von: tkinter là "quầy lễ tân" chỉ nói được một luồng (UI thread), còn
 crawl là "việc bếp núc" chạy asyncio. Không thể để lễ tân xuống bếp (block UI),
@@ -21,10 +21,13 @@ from __future__ import annotations
 
 import asyncio
 import queue
+import re
+import sys
 import threading
 import tkinter as tk
 import tkinter.font as tkfont
 from datetime import datetime
+from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import sv_ttk
@@ -36,10 +39,20 @@ from gui import viewmodel as vm
 from utils.config_loader import load_sites, update_credentials
 from utils.excel_writer import writer_for
 from utils.models import CatalogItem
+from utils.normalizer import strip_accents
 from utils.selected_store import load_selected, save_selected
 from utils.url_detect import detect_product_id, suggest_name_from_urls
 
 DEFAULT_CSV = "output/prices.csv"
+
+
+def _auth_key(text: str) -> str:
+    """Chuẩn hoá 1 định danh site về khoá chung để chống popup lỗi đăng nhập lặp.
+
+    Cùng 1 site nhưng xuất hiện 3 dạng: `site_id` ("thuocsisaigon"), tên hiển thị
+    ("Thuốc Sĩ Sài Gòn"), và prefix log `[ThuocSiSaiGon]`. Bỏ dấu + lowercase +
+    chỉ giữ chữ-số → cả 3 hội tụ về "thuocsisaigon", dedup được xuyên suốt."""
+    return "".join(ch for ch in strip_accents(text).lower() if ch.isalnum())
 
 # sv_ttk chỉ theme hoá ttk.* — Listbox/Text là widget Tk cổ điển, tự set màu
 # khớp bảng màu light của sv_ttk (nền trắng ngà, chữ đen, xanh accent Windows
@@ -64,9 +77,10 @@ class MainWindow(tk.Tk):
 
     def __init__(self):
         super().__init__()
-        self.title("Drug Price Crawler")
+        self.title("PharmaPrice")
         self.geometry("780x780")
         self.minsize(720, 720)
+        self._set_window_icon()
 
         # sv_ttk: theme kiểu Windows 11 (Fluent) cho toàn bộ widget ttk — thay
         # cho "clam" trước đây. Cũng vẽ thuần Tcl (không qua GTK pixmap) nên
@@ -101,12 +115,26 @@ class MainWindow(tk.Tk):
         self._catalog_ready = False  # True sau khi _warm_catalog_worker nạp xong catalog_master_entity_resolved.xlsx
         self._recrawling = False  # True trong lúc _recrawl_all_worker đang chạy, chặn bấm chồng
         self._saving_manual_product = False  # True trong lúc _save_manual_product_worker đang ghi xlsx
+        self._auth_warned: set[str] = set()  # site đã popup lỗi đăng nhập rồi — không popup lại (chỉ log)
         self._build_ui()
         self._restore_selected()
         self.after(100, self._drain_queue)
         self._start_catalog_warmup()
+        self._start_login_check()
 
     # ----------------------------------------------------------------- fonts
+    def _set_window_icon(self) -> None:
+        """Icon viên nang cho cửa sổ. Asset bundle trong .exe (_MEIPASS) hoặc
+        assets/ ở gốc project khi chạy dev. Giữ tham chiếu PhotoImage (self._icon)
+        để Tk không thu hồi (GC) làm mất icon. Lỗi icon KHÔNG được làm sập app."""
+        base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent.parent))
+        png = base / "assets" / "pill.png"
+        try:
+            self._icon = tk.PhotoImage(file=str(png))
+            self.iconphoto(True, self._icon)
+        except Exception:  # noqa: BLE001 — icon là trang trí, thiếu cũng chạy được
+            pass
+
     def _configure_fonts(self) -> None:
         """sv_ttk (theme Windows 11 Fluent) tạo font "SunValleyBodyFont"/
         "SunValleyCaptionFont" với family "Segoe UI Variable ..." — font NÀY chỉ
@@ -147,7 +175,7 @@ class MainWindow(tk.Tk):
 
         title_row = ttk.Frame(self)
         title_row.pack(fill="x", **pad)
-        ttk.Label(title_row, text="Drug Price Crawler", font=("", 13, "bold")).pack(side="left")
+        ttk.Label(title_row, text="PharmaPrice", font=("", 13, "bold")).pack(side="left")
         self._credentials_btn = ttk.Button(
             title_row, text="⚙ Sửa tài khoản", command=self._open_credentials_editor
         )
@@ -320,6 +348,31 @@ class MainWindow(tk.Tk):
             self._msg_queue.put(("catalog_failed", None))
             return
         self._msg_queue.put(("catalog_ready", count))
+
+    # -------------------------------------------------- kiểm tra đăng nhập
+    def _start_login_check(self) -> None:
+        """Ngay khi mở app, thử đăng nhập tất cả site trong thread nền. Site nào
+        lỗi (sai tài khoản/hết hạn) sẽ được gộp thành 1 popup cảnh báo — để người
+        dùng biết NGAY, thay vì crawl xong mới thấy giá = 0 (vd thuocsisaigon)."""
+        if self._engine is None:
+            return
+        self._append_log("Đang kiểm tra đăng nhập các site...")
+        threading.Thread(target=self._login_check_worker, daemon=True).start()
+
+    def _login_check_worker(self) -> None:
+        # Engine riêng cho thread này (network I/O) — bỏ marker khỏi log để
+        # KHÔNG kích popup tự động của _drain_queue; startup check tự gộp 1 popup
+        # riêng qua "login_check_done".
+        def qlog(m: str) -> None:
+            self._msg_queue.put(("log", m.replace(AUTH_FAILURE_MARKER + ": ", "").replace(AUTH_FAILURE_MARKER, "⚠")))
+
+        try:
+            engine = CrawlerEngine(use_cache=False, log=qlog)
+            results = asyncio.run(engine.check_logins())
+        except Exception as exc:  # noqa: BLE001
+            self._msg_queue.put(("log", f"Lỗi kiểm tra đăng nhập: {exc}"))
+            return
+        self._msg_queue.put(("login_check_done", results))
 
     def _schedule_refresh_suggestions(self) -> None:
         """Debounce gõ phím: mỗi `_refresh_suggestions()` query SQLite + fuzzy-merge
@@ -975,6 +1028,7 @@ class MainWindow(tk.Tk):
         bỏ sót vì không phải tab đang xem."""
         pending_logs: list[str] = []
         auth_failures: list[str] = []
+        login_failures: list = []  # LoginCheck thất bại từ startup check
         try:
             while True:
                 msg = self._msg_queue.get_nowait()
@@ -1034,20 +1088,58 @@ class MainWindow(tk.Tk):
                     self._refresh_suggestions()
                 elif kind == "catalog_failed":
                     self._stop_catalog_spinner()
+                elif kind == "login_check_done":
+                    results = msg[1]
+                    ok = [r for r in results if r.ok]
+                    failed = [r for r in results if not r.ok]
+                    pending_logs.append(
+                        f"Kiểm tra đăng nhập xong: {len(ok)}/{len(results)} site OK"
+                        + (f", {len(failed)} site LỖI." if failed else ".")
+                    )
+                    login_failures.extend(failed)
         except queue.Empty:
             pass
         if pending_logs:
             self._append_logs(pending_logs)
         if auth_failures:
             self._notify_auth_failures(auth_failures)
+        if login_failures:
+            self._notify_login_failures(login_failures)
         self.after(100, self._drain_queue)
 
     def _notify_auth_failures(self, messages: list[str]) -> None:
-        """1 popup gộp cho mọi lỗi đăng nhập rơi vào CÙNG 1 tick — tránh bắn
-        nhiều modal liên tiếp nếu vài site cùng fail 1 lượt (vd full refresh
-        nền gặp nhiều site sai tài khoản cùng lúc)."""
-        body = "\n".join(m.replace(AUTH_FAILURE_MARKER + ": ", "") for m in messages)
+        """Popup lỗi đăng nhập lúc CRAWL — nhưng mỗi site chỉ popup 1 LẦN/phiên
+        (`_auth_warned`). Lần crawl sau site đó vẫn fail thì chỉ ghi Log, không
+        bật lại modal (tránh nhá popup liên tục khi recrawl nhiều sản phẩm)."""
+        fresh = []
+        for m in messages:
+            prefix = re.match(r"\[([^\]]+)\]", m)
+            key = _auth_key(prefix.group(1) if prefix else m)
+            if key in self._auth_warned:
+                continue
+            self._auth_warned.add(key)
+            fresh.append(m)
+        if not fresh:
+            return
+        body = "\n".join(m.replace(AUTH_FAILURE_MARKER + ": ", "") for m in fresh)
         messagebox.showwarning("Đăng nhập thất bại", body)
+
+    def _notify_login_failures(self, failed: list) -> None:
+        """1 popup gộp cho kết quả kiểm tra đăng nhập lúc khởi động — liệt kê
+        site lỗi + lý do server. Mỗi site chỉ popup 1 lần/phiên (`_auth_warned`),
+        chia sẻ với popup lúc crawl nên không báo trùng."""
+        fresh = [r for r in failed if _auth_key(r.site_id) not in self._auth_warned]
+        if not fresh:
+            return
+        for r in fresh:
+            self._auth_warned.add(_auth_key(r.site_id))
+        body = "\n".join(f"• {r.name}: {r.error}" for r in fresh)
+        messagebox.showwarning(
+            "Đăng nhập thất bại khi khởi động",
+            "Các site sau ĐĂNG NHẬP KHÔNG thành công — giá của chúng sẽ bị ẩn (= 0):\n\n"
+            f"{body}\n\n"
+            "Kiểm tra lại tài khoản/mật khẩu (nút 'Tài khoản' hoặc config/accounts.yaml).",
+        )
 
     def _append_log(self, message: str) -> None:
         self._append_logs([message])

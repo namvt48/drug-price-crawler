@@ -926,3 +926,76 @@ class TestFetchLivePrices:
         assert login_count == 3, "vẫn phải search đủ 3 lần (3 tên khác nhau), chỉ login chung 1 lần"
         assert len(results) == 3
         engine.close()
+
+
+class TestCheckLogins:
+    """`check_logins` thử đăng nhập từng site enabled để cảnh báo NGAY lúc mở app
+    (vd thuocsisaigon sai tài khoản → giá bị ẩn = 0), thay vì crawl xong mới biết."""
+
+    def _cfg_two_enabled(self, path: Path) -> None:
+        path.write_text(
+            """
+defaults:
+  rate_limit:
+    delay_seconds: 0
+    max_retries: 1
+    retry_backoff_seconds: 0
+sites:
+  giathuoctot:
+    name: "Gia Thuoc Tot"
+    base_url: "https://x"
+    credentials: {username: "u", password: "p"}
+  thuocsisaigon:
+    name: "Thuoc Si Sai Gon"
+    base_url: "https://y"
+    credentials: {username: "u", password: "p"}
+""",
+            encoding="utf-8",
+        )
+
+    def _fake(self, ok_sites: set[str]):
+        class _FakeCrawler:
+            def __init__(self, config, log=None, **kwargs):
+                self._cfg = config
+                self._log = log or (lambda _m: None)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return None
+
+            async def ensure_auth(self, *, force_real_login: bool = False):
+                if self._cfg.id not in ok_sites:
+                    raise RuntimeError(f"{self._cfg.name}: Thông tin đăng nhập không hợp lệ.")
+
+        return _FakeCrawler
+
+    def test_all_ok(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        cfg = tmp_path / "accounts.yaml"
+        self._cfg_two_enabled(cfg)
+        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        from crawlers import engine as engine_mod
+
+        fake = self._fake({"giathuoctot", "thuocsisaigon"})
+        monkeypatch.setitem(engine_mod.CRAWLER_REGISTRY, "giathuoctot", fake)
+        monkeypatch.setitem(engine_mod.CRAWLER_REGISTRY, "thuocsisaigon", fake)
+        results = asyncio.run(engine.check_logins())
+        assert {r.site_id for r in results} == {"giathuoctot", "thuocsisaigon"}
+        assert all(r.ok and r.error == "" for r in results)
+        engine.close()
+
+    def test_one_fails_others_ok(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        cfg = tmp_path / "accounts.yaml"
+        self._cfg_two_enabled(cfg)
+        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        from crawlers import engine as engine_mod
+
+        fake = self._fake({"giathuoctot"})  # thuocsisaigon fail
+        monkeypatch.setitem(engine_mod.CRAWLER_REGISTRY, "giathuoctot", fake)
+        monkeypatch.setitem(engine_mod.CRAWLER_REGISTRY, "thuocsisaigon", fake)
+        by_id = {r.site_id: r for r in asyncio.run(engine.check_logins())}
+        assert by_id["giathuoctot"].ok is True
+        assert by_id["thuocsisaigon"].ok is False
+        assert "không hợp lệ" in by_id["thuocsisaigon"].error
+        engine.close()

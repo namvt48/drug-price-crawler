@@ -24,7 +24,7 @@ python cli.py -k boganic -o out.xlsx         # .xlsx extension → Excel export 
 python cli.py --history "<drug name>"        # price history from output/cache.db
 python -m crawlers.scheduler -k boganic --once   # one scheduled cycle + price-change alerts
 python main.py                               # no args → tkinter GUI
-build.bat                                     # Windows only → dist/DrugPriceCrawler.exe
+build.bat                                     # Windows only → dist/PharmaPrice.exe
 ```
 
 Tests: `pip install -r requirements-dev.txt && pytest` — coverage gate ≥90% (`pytest.ini`), `gui/main_window.py` excluded (`.coveragerc`; GUI logic lives in testable `gui/viewmodel.py`). CI runs the same on push/PR (`.github/workflows/ci.yml`). For crawler changes also run a live single-site crawl of a working source (giathuoctot).

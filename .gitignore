@@ -47,3 +47,6 @@ license.key
 .coverage
 .pytest_cache/
 htmlcov/
+
+# --- Agent/tool scratch (drafts, plans) ---
+.omo/

@@ -60,8 +60,20 @@ class ThuocSiSaiGonCrawler(BaseCrawler):
             },
             headers={"Content-Type": "application/x-www-form-urlencoded", "Referer": f"{BASE}/account/login"},
         )
-        if resp.status_code not in (200, 302):
-            raise AuthError(f"Login HTTP {resp.status_code}.")
+        # Haravan: login THÀNH CÔNG luôn trả 30x redirect (về /account) + set
+        # cookie phiên. Login SAI trả 200, render lại chính trang login kèm
+        # node `.errors` — KHÔNG đổi status. Nếu coi 200 là OK (bản cũ), login
+        # sai bị nuốt IM LẶNG → crawl như khách → mọi giá = 0 ("Đăng nhập mua
+        # hàng"). Vì vậy chỉ 30x mới là thành công; 200 = thất bại, moi thông
+        # báo lỗi của server để báo thẳng cho người dùng (fail loud).
+        if resp.status_code in (301, 302, 303):
+            return
+        err_node = HTMLParser(resp.text).css_first(".errors")
+        server_msg = err_node.text(strip=True) if err_node else ""
+        raise AuthError(
+            server_msg
+            or f"Đăng nhập thất bại (HTTP {resp.status_code}) — kiểm tra lại tài khoản/mật khẩu."
+        )
 
     async def _fetch_products(self, keyword: str) -> list[dict]:
         all_items: list[dict] = []

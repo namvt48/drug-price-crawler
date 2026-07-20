@@ -1,6 +1,6 @@
 @echo off
 REM ===========================================================================
-REM  Build Drug Price Crawler -> 1 file .exe portable (chay tren Windows).
+REM  Build PharmaPrice -> 1 file .exe portable (chay tren Windows).
 REM ===========================================================================
 echo [1/4] Cai dependencies...
 pip install -r requirements.txt
@@ -24,7 +24,7 @@ if not exist output\catalog_master_entity_resolved.xlsx (
 copy /Y output\catalog_master_entity_resolved.xlsx dist\output\catalog_master_entity_resolved.xlsx >nul
 
 echo [4/4] Xong!
-echo    Output: dist\DrugPriceCrawler.exe
+echo    Output: dist\PharmaPrice.exe
 echo    Nho dien tai khoan vao: dist\config\accounts.yaml
 echo    Catalog san pham: dist\output\catalog_master_entity_resolved.xlsx
 pause

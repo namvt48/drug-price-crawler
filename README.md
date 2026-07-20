@@ -1,4 +1,4 @@
-# Drug Price Crawler
+# PharmaPrice
 
 Tool crawl **giá thuốc sỉ (B2B)** từ 9 website dược Việt Nam cần đăng nhập →
 xuất CSV/Excel. Có GUI (tkinter, gom biến thể + highlight giá rẻ nhất), CLI,
@@ -66,11 +66,11 @@ Bản dùng thử có hiệu lực **14 ngày** kể từ lần mở đầu tiê
 build.bat
 ```
 
-Kết quả gồm `dist\DrugPriceCrawler.exe`, config mẫu và catalog sản phẩm chuẩn:
+Kết quả gồm `dist\PharmaPrice.exe`, config mẫu và catalog sản phẩm chuẩn:
 
 ```text
 dist/
-├── DrugPriceCrawler.exe
+├── PharmaPrice.exe
 ├── config/
 │   ├── accounts.yaml
 │   └── name_aliases.yaml
@@ -80,7 +80,7 @@ dist/
 
 `accounts.yaml` và catalog đặt **cạnh** file `.exe`, không nhúng vào binary để
 giữ mật khẩu bên ngoài executable và cho phép app cập nhật catalog. GitHub Actions
-upload nguyên cấu trúc này trong artifact `DrugPriceCrawler-windows`.
+upload nguyên cấu trúc này trong artifact `PharmaPrice-windows`.
 
 ## Kiến trúc
 

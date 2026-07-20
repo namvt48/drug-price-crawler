@@ -12,6 +12,7 @@ import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import NamedTuple
 
 from utils.catalog_master import append_manual_product, append_or_update_listing, load_master_catalog
 from utils.config_loader import app_base_dir, load_filters, load_sites, load_watchlist_config
@@ -26,6 +27,15 @@ from .cache_manager import CacheManager
 
 LogFn = Callable[[str], None]
 ProgressFn = Callable[[int, int], None]  # (done, total)
+
+
+class LoginCheck(NamedTuple):
+    """Kết quả thử đăng nhập 1 site (dùng cho kiểm tra lúc khởi động GUI)."""
+
+    site_id: str
+    name: str
+    ok: bool
+    error: str  # "" nếu ok
 
 
 class CrawlerEngine:
@@ -56,6 +66,32 @@ class CrawlerEngine:
             for sid in CRAWLER_REGISTRY
             if sid in self.sites and self.sites[sid].enabled
         ]
+
+    async def check_logins(self, site_ids: list[str] | None = None) -> list[LoginCheck]:
+        """Thử ĐĂNG NHẬP THẬT từng site enabled (song song), KHÔNG crawl sản phẩm.
+
+        Dùng để kiểm tra ngay khi mở app: nếu tài khoản sai/hết hạn (vd
+        thuocsisaigon trả "Thông tin đăng nhập không hợp lệ"), báo cho người
+        dùng NGAY thay vì để họ crawl xong mới thấy giá = 0. `force_real_login`
+        để không tin phiên cache — xác thực credentials thật. 1 site lỗi không
+        ảnh hưởng site khác."""
+        targets = site_ids or [s.id for s in self.available_sites()]
+
+        async def one(site_id: str) -> LoginCheck:
+            config = self.sites.get(site_id)
+            crawler_cls = CRAWLER_REGISTRY.get(site_id)
+            name = config.name if config else site_id
+            if config is None or crawler_cls is None:
+                return LoginCheck(site_id, name, False, "Thiếu crawler hoặc cấu hình.")
+            crawler: BaseCrawler = crawler_cls(config, log=self.log)
+            try:
+                async with crawler:
+                    await crawler.ensure_auth(force_real_login=True)
+                return LoginCheck(site_id, name, True, "")
+            except Exception as exc:  # noqa: BLE001 — gom mọi lỗi login thành báo cáo
+                return LoginCheck(site_id, name, False, str(exc))
+
+        return list(await asyncio.gather(*(one(sid) for sid in targets)))
 
     async def crawl(
         self,
