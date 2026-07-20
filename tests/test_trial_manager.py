@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -42,14 +41,19 @@ class TestEncryptDecrypt:
 
 
 class TestTrialCheck:
-    def test_first_run(
+    def test_first_run_starts_fourteen_day_trial(
         self, monkeypatch: pytest.MonkeyPatch, dev_off, isolated_storage, tmp_path: Path
     ) -> None:
+        # Given: a machine with no existing trial state.
         tm = TrialManager()
+
+        # When: the app checks the trial for the first time.
         status = tm.check()
+
+        # Then: the full fourteen-day allowance is available and persisted.
         assert status.is_valid is True
         assert status.is_first_run is True
-        assert status.days_remaining == 7
+        assert status.days_remaining == 14
         assert (tmp_path / "t.dat").exists()
 
     def test_second_run_not_first(
@@ -66,11 +70,25 @@ class TestTrialCheck:
         self, monkeypatch: pytest.MonkeyPatch, dev_off, isolated_storage
     ) -> None:
         tm = TrialManager()
-        old = (datetime.now() - timedelta(days=8)).isoformat()
+        old = (datetime.now() - timedelta(days=15)).isoformat()
         tm._write_trial({"first_run": old, "machine_id": tm._machine_id})
         status = tm.check()
         assert status.is_valid is False
         assert status.days_remaining == 0
+
+    def test_eight_day_old_trial_remains_valid(
+        self, monkeypatch: pytest.MonkeyPatch, dev_off, isolated_storage
+    ) -> None:
+        # Given: an installation first opened eight days ago.
+        tm = TrialManager()
+        first_run = (datetime.now() - timedelta(days=8)).isoformat()
+        tm._write_trial({"first_run": first_run, "machine_id": tm._machine_id})
+
+        # When: the app checks the extended trial.
+        status = tm.check()
+
+        # Then: the installation remains usable inside the fourteen-day window.
+        assert status.is_valid is True
 
     def test_machine_id_mismatch(
         self, monkeypatch: pytest.MonkeyPatch, dev_off, isolated_storage

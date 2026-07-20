@@ -6,13 +6,20 @@
 # accounts.yaml phải đặt CẠNH file .exe: dist/config/accounts.yaml
 # (config_loader.app_base_dir() đọc config cạnh .exe khi frozen).
 
+from PyInstaller.utils.hooks import collect_data_files
+
 block_cipher = None
+
+# sv_ttk: theme ttk kiểu Windows 11 (xem gui/main_window.py) — bundle kèm
+# file .tcl/.png riêng (sv.tcl, theme/light.tcl, spritesheet_light.png...),
+# không nằm trong .py nên PyInstaller không tự thấy, phải khai báo thủ công.
+datas = collect_data_files('sv_ttk')
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=datas,
     hiddenimports=[
         'selectolax.parser',
         'selectolax.lexbor',

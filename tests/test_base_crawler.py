@@ -9,8 +9,20 @@ from typing import Any
 import httpx
 import pytest
 
-from crawlers.base import AuthError, BaseCrawler, CrawlError
+from crawlers.base import AuthError, BaseCrawler, CrawlError, clear_auth_cache
 from utils.models import DrugPrice, SiteConfig, SourceName
+
+
+@pytest.fixture(autouse=True)
+def _isolated_auth_cache():
+    """`_AUTH_CACHE` (crawlers/base.py) là module-level, dùng chung giữa mọi
+    instance để cho phép tái sử dụng phiên đăng nhập thật giữa các lần
+    fetch (xem docstring `BaseCrawler.ensure_auth`) — nhưng vì vậy PHẢI dọn
+    sạch giữa các test, không thì test sau kế thừa nhầm cache của test trước
+    (cùng source_name=GIATHUOCTOT ở _FakeCrawler) và login_count sai lệch."""
+    clear_auth_cache()
+    yield
+    clear_auth_cache()
 
 
 async def _noop(*_args: object, **_kwargs: object) -> None:
@@ -244,11 +256,203 @@ class TestEnsureAuth:
         c = _FakeCrawler(_make_config(expiry_hours=12))
         asyncio.run(c.open())
         asyncio.run(c.ensure_auth())
-        # Simulate old auth time.
+        # Simulate old auth time. Cache dùng chung (crawlers/base.py) vẫn còn
+        # "tươi" theo timestamp thật — phải dọn luôn cache thì mới ép được
+        # relogin THẬT (không thì restore từ cache, xem
+        # test_restores_from_cache_instead_of_relogin bên dưới).
         c._auth_time = time.time() - 13 * 3600
+        clear_auth_cache(c.source_name)
         asyncio.run(c.ensure_auth())
         assert c.login_count == 2
         asyncio.run(c.close())
+
+    def test_restores_from_cache_instead_of_relogin(self) -> None:
+        """Instance khác (giả lập lần fetch trước, có thể ở thread khác) đã
+        đăng nhập cho CÙNG site — instance MỚI phải tái dùng token/cookie đó
+        thay vì gọi `_login()` thật lại (đây là tính năng chính của cache)."""
+        c1 = _FakeCrawler(_make_config(expiry_hours=12))
+        asyncio.run(c1.open())
+        asyncio.run(c1.ensure_auth())
+        asyncio.run(c1.close())
+
+        c2 = _FakeCrawler(_make_config(expiry_hours=12))
+        asyncio.run(c2.open())
+        asyncio.run(c2.ensure_auth())
+        assert c2.login_count == 0, "phải dùng lại cache, không được login thật lại"
+        assert c2._token == "tok"
+        assert c2._authenticated is True
+        asyncio.run(c2.close())
+
+    def test_cache_expired_by_time_forces_relogin(self) -> None:
+        """Cache dùng chung cũng phải tôn trọng `expiry_hours` — không phải
+        cứ có cache là dùng mãi mãi."""
+        c1 = _FakeCrawler(_make_config(expiry_hours=12))
+        asyncio.run(c1.open())
+        asyncio.run(c1.ensure_auth())
+        asyncio.run(c1.close())
+
+        from crawlers import base as base_mod
+        cached = base_mod._AUTH_CACHE[SourceName.GIATHUOCTOT.value]
+        cached["auth_time"] = time.time() - 13 * 3600  # giả lập cache cũ
+
+        c2 = _FakeCrawler(_make_config(expiry_hours=12))
+        asyncio.run(c2.open())
+        asyncio.run(c2.ensure_auth())
+        assert c2.login_count == 1, "cache qua han thi phai login that"
+        asyncio.run(c2.close())
+
+    def test_reauth_bypasses_cache_and_relogins(self) -> None:
+        """`_reauth()` (401 giữa chừng) biết chắc session hiện tại đã hỏng —
+        phải bỏ qua cache (dù cache còn 'tươi' theo timestamp) và login THẬT
+        lại, không thì có thể lặp vô ích với 1 cache đã bị site vô hiệu hoá."""
+        c1 = _FakeCrawler(_make_config(expiry_hours=12))
+        asyncio.run(c1.open())
+        asyncio.run(c1.ensure_auth())
+        asyncio.run(c1.close())
+
+        c2 = _FakeCrawler(_make_config(expiry_hours=12))
+        asyncio.run(c2.open())
+        asyncio.run(c2._reauth())
+        assert c2.login_count == 1, "_reauth phải login thật, không được dùng cache"
+        asyncio.run(c2.close())
+
+
+class TestEnsureAuthLoginFailure:
+    """`_login()` thất bại (sai tài khoản, lỗi mạng lúc login...) phải luôn
+    được gói lại thành `AuthError` + gắn `AUTH_FAILURE_MARKER` vào log — GUI
+    (gui/main_window.py `_drain_queue`) dựa vào marker này để popup cảnh báo."""
+
+    class _FailingLoginCrawler(_FakeCrawler):
+        async def _login(self) -> None:
+            self.login_count += 1
+            raise ValueError("sai mat khau")
+
+    def test_wraps_any_exception_as_autherror(self) -> None:
+        c = self._FailingLoginCrawler(_make_config())
+        asyncio.run(c.open())
+        with pytest.raises(AuthError):
+            asyncio.run(c.ensure_auth())
+        asyncio.run(c.close())
+
+    def test_logs_with_auth_failure_marker(self) -> None:
+        from crawlers.base import AUTH_FAILURE_MARKER
+
+        logged: list[str] = []
+        c = self._FailingLoginCrawler(_make_config(), log=logged.append)
+        asyncio.run(c.open())
+        with pytest.raises(AuthError):
+            asyncio.run(c.ensure_auth())
+        asyncio.run(c.close())
+
+        assert any(AUTH_FAILURE_MARKER in msg for msg in logged)
+        assert any("sai mat khau" in msg for msg in logged)
+
+    def test_failed_login_not_cached(self) -> None:
+        """Login fail thì KHÔNG được lưu vào _AUTH_CACHE — không thì instance
+        khác sau đó sẽ "phục hồi" nhầm 1 phiên chưa từng đăng nhập thành công."""
+        from crawlers import base as base_mod
+
+        c = self._FailingLoginCrawler(_make_config())
+        asyncio.run(c.open())
+        with pytest.raises(AuthError):
+            asyncio.run(c.ensure_auth())
+        asyncio.run(c.close())
+
+        assert SourceName.GIATHUOCTOT.value not in base_mod._AUTH_CACHE
+
+
+class TestAuthCacheHelpers:
+    def test_clear_specific_source(self) -> None:
+        from crawlers import base as base_mod
+
+        base_mod._AUTH_CACHE[SourceName.GIATHUOCTOT.value] = {"token": "x", "auth_time": time.time()}
+        base_mod._AUTH_CACHE[SourceName.THUOCSI.value] = {"token": "y", "auth_time": time.time()}
+        clear_auth_cache(SourceName.GIATHUOCTOT)
+        assert SourceName.GIATHUOCTOT.value not in base_mod._AUTH_CACHE
+        assert SourceName.THUOCSI.value in base_mod._AUTH_CACHE
+
+    def test_clear_all_sources(self) -> None:
+        from crawlers import base as base_mod
+
+        base_mod._AUTH_CACHE[SourceName.GIATHUOCTOT.value] = {"token": "x", "auth_time": time.time()}
+        clear_auth_cache()
+        assert base_mod._AUTH_CACHE == {}
+
+    def test_extra_auth_state_roundtrip(self) -> None:
+        """Hook `_extra_auth_state`/`_restore_extra_auth_state` cho site có
+        state khác ngoài token/cookie (vd CSRF gắn với session — chothuoc247)."""
+
+        class _ExtraStateCrawler(_FakeCrawler):
+            source_name = SourceName.CHOTHUOC247
+
+            def __init__(self, config, log=None):
+                super().__init__(config, log)
+                self._csrf = ""
+
+            async def _login(self) -> None:
+                await super()._login()
+                self._csrf = "csrf-abc"
+
+            def _extra_auth_state(self) -> dict:
+                return {"csrf": self._csrf}
+
+            def _restore_extra_auth_state(self, extra: dict) -> None:
+                self._csrf = extra.get("csrf", "")
+
+        c1 = _ExtraStateCrawler(_make_config(expiry_hours=12))
+        asyncio.run(c1.open())
+        asyncio.run(c1.ensure_auth())
+        asyncio.run(c1.close())
+
+        c2 = _ExtraStateCrawler(_make_config(expiry_hours=12))
+        asyncio.run(c2.open())
+        asyncio.run(c2.ensure_auth())
+        assert c2.login_count == 0
+        assert c2._csrf == "csrf-abc", "extra state (csrf) phải được phục hồi cùng token/cookie"
+        asyncio.run(c2.close())
+
+
+class _DuplicateCookieCrawler(_FakeCrawler):
+    """WordPress (duocphamgiasi) đặt 2 cookie CÙNG TÊN khác path (vd
+    wordpress_sec_xxx cho "/" và "/wp-admin") — mô phỏng lại tình huống đó."""
+
+    async def _login(self) -> None:
+        await super()._login()
+        self._client.cookies.set("wordpress_sec_abc", "val-root", domain="example.test", path="/")
+        self._client.cookies.set("wordpress_sec_abc", "val-admin", domain="example.test", path="/wp-admin")
+
+
+class TestAuthCacheDuplicateNamedCookies:
+    """Regression: dict(client.cookies) từng ném CookieConflict ("Multiple cookies
+    exist with name=...") khi 2+ cookie trùng tên khác domain/path — xem
+    `_save_auth_cache`/`_restore_cached_auth`."""
+
+    def test_save_does_not_raise_and_keeps_both(self) -> None:
+        c = _DuplicateCookieCrawler(_make_config(expiry_hours=12))
+        asyncio.run(c.open())
+        asyncio.run(c.ensure_auth())  # trước đây crash CookieConflict ở đây
+        asyncio.run(c.close())
+
+        from crawlers import base as base_mod
+        cached = base_mod._AUTH_CACHE[SourceName.GIATHUOCTOT.value]
+        values = {ck["value"] for ck in cached["cookies"] if ck["name"] == "wordpress_sec_abc"}
+        assert values == {"val-root", "val-admin"}
+
+    def test_restore_reapplies_both_cookies(self) -> None:
+        c1 = _DuplicateCookieCrawler(_make_config(expiry_hours=12))
+        asyncio.run(c1.open())
+        asyncio.run(c1.ensure_auth())
+        asyncio.run(c1.close())
+
+        c2 = _DuplicateCookieCrawler(_make_config(expiry_hours=12))
+        asyncio.run(c2.open())
+        asyncio.run(c2.ensure_auth())
+        assert c2.login_count == 0, "phải restore từ cache, không login lại"
+        restored_values = {
+            ck.value for ck in c2._client.cookies.jar if ck.name == "wordpress_sec_abc"
+        }
+        assert restored_values == {"val-root", "val-admin"}
+        asyncio.run(c2.close())
 
 
 class TestSessionExpired:

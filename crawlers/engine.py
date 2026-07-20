@@ -8,14 +8,17 @@ cả bếp. Món nào còn trong tủ lạnh (cache còn hạn) thì lấy ra lu
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from collections.abc import Callable
 from pathlib import Path
 
+from utils.catalog_master import append_manual_product, append_or_update_listing, load_master_catalog
 from utils.config_loader import app_base_dir, load_filters, load_sites, load_watchlist_config
 from utils.filters import apply_filters
 from utils.models import CatalogItem, DrugPrice, FilterConfig, SiteConfig, WatchlistItem
 from utils.normalizer import strip_accents
+from utils.url_detect import detect_product_id
 
 from .base import BaseCrawler, CrawlError
 from .b2b import CRAWLER_REGISTRY
@@ -39,6 +42,12 @@ class CrawlerEngine:
         self.cache = CacheManager(cache_db or (app_base_dir() / "output" / "cache.db"))
         self.log: LogFn = log or (lambda _m: None)
         self.use_cache = use_cache
+        self._master_catalog: list[CatalogItem] | None = None
+        # catalog_master_entity_resolved.xlsx có ~58k dòng — openpyxl mất vài chục
+        # giây để đọc hết. Lock để GUI warm-up (thread nền, xem main_window
+        # `_warm_catalog_worker`) và lần suggest_catalog đầu tiên (UI thread, nếu
+        # gõ trước khi warm-up xong) không cùng đọc file 2 lần song song.
+        self._catalog_lock = threading.Lock()
 
     def available_sites(self) -> list[SiteConfig]:
         """Site có crawler + enabled, giữ đúng thứ tự registry."""
@@ -159,49 +168,190 @@ class CrawlerEngine:
         đúng tên sản phẩm đó (force_refresh, nhanh vì server tự thu hẹp kết quả).
         Site không lọc được (vd bachhoathuoc): gọi thẳng `fetch_price_by_id`, bỏ qua
         `crawl_all()`/cache hoàn toàn.
+
+        Gom `items` theo site_id, chạy SONG SONG GIỮA CÁC SITE (mỗi site 1
+        client/rate-limiter riêng, tổng thời gian ~ site chậm nhất) nhưng
+        TRONG 1 SITE chỉ mở 1 crawler/login DUY NHẤT rồi dùng lại tuần tự cho
+        mọi item cùng site — không phải 1 crawler/login riêng mỗi item.
+
+        Lý do bắt buộc: 1 nhóm sản phẩm (gộp theo canonical_key) có thể chứa
+        NHIỀU CatalogItem của CÙNG 1 site (site sàn đa nhà cung cấp như
+        thuocsi thường có vài SKU trùng cho cùng 1 thuốc). Trước đây mỗi item
+        tự tạo crawler + login riêng; chạy song song (`asyncio.gather` theo
+        item) nghĩa là bắn hàng chục login ĐỒNG THỜI vào CÙNG 1 site chỉ vì 1
+        nhóm có nhiều item — đã khiến ThuocSi tưởng bị tấn công và tự khoá IP
+        (HTTP 403 "đăng nhập quá nhiều lần", xảy ra thật trong log). Gom theo
+        site trước rồi login 1 lần/site giải quyết tận gốc.
         """
-        results: list[DrugPrice] = []
+        by_site: dict[str, list[CatalogItem]] = {}
         for item in items:
-            site_id = self._site_id_for_source(item.source)
+            by_site.setdefault(self._site_id_for_source(item.source), []).append(item)
+
+        async def fetch_site(site_id: str, site_items: list[CatalogItem]) -> list[DrugPrice]:
             crawler_cls = CRAWLER_REGISTRY.get(site_id)
             config = self.sites.get(site_id)
             if crawler_cls is None or config is None:
                 self.log(f"[{site_id}] Không có cấu hình/crawler — bỏ qua live-fetch.")
-                continue
+                return []
 
             supports_keyword = getattr(crawler_cls, "keyword_search_supported", True)
-            if supports_keyword:
-                try:
-                    matches = await self._crawl_one(site_id, item.drug_name, force_refresh=True)
-                except Exception as exc:
-                    self.log(f"[{site_id}] Lỗi lấy giá live '{item.drug_name}': {exc}")
-                    continue
-                if item.product_id:
-                    by_id = [m for m in matches if m.product_id == item.product_id]
-                    matches = by_id or matches
-                results.extend(matches)
-                continue
-
             crawler: BaseCrawler = crawler_cls(config, log=self.log)
+            site_results: list[DrugPrice] = []
             try:
                 async with crawler:
-                    price = await crawler.fetch_price_by_id(item.product_id)
+                    for item in site_items:
+                        if supports_keyword:
+                            try:
+                                matches = await crawler.crawl(item.drug_name)
+                            except Exception as exc:
+                                self.log(f"[{site_id}] Lỗi lấy giá live '{item.drug_name}': {exc}")
+                                continue
+                            if self.use_cache and config.cache.enabled and matches:
+                                self.cache.set(site_id, item.drug_name, matches, config.cache.ttl_hours)
+                            if item.product_id:
+                                by_id = [m for m in matches if m.product_id == item.product_id]
+                                matches = by_id or matches
+                            site_results.extend(matches)
+                        else:
+                            try:
+                                price = await crawler.fetch_price_by_id(item.product_id)
+                            except Exception as exc:
+                                self.log(f"[{site_id}] Lỗi lấy giá live theo id '{item.product_id}': {exc}")
+                                continue
+                            if price is not None:
+                                site_results.append(price)
+                                self.cache.record_history([price])
             except Exception as exc:
-                self.log(f"[{site_id}] Lỗi lấy giá live theo id '{item.product_id}': {exc}")
-                continue
-            if price is not None:
-                results.append(price)
-                self.cache.record_history([price])
+                self.log(f"[{site_id}] Lỗi live-fetch: {exc}")
+            return site_results
+
+        batches = await asyncio.gather(
+            *(fetch_site(sid, site_items) for sid, site_items in by_site.items())
+        )
+        results: list[DrugPrice] = []
+        for batch in batches:
+            results.extend(batch)
         return results
 
     def suggest_names(self, prefix: str, limit: int = 30) -> list[str]:
         return self.cache.suggest_names(prefix, limit)
 
-    def suggest_catalog(self, prefix: str, limit: int = 30) -> list[CatalogItem]:
-        return self.cache.catalog_suggest(prefix, limit)
+    def _ensure_master_catalog(self) -> list[CatalogItem]:
+        """Nạp catalog_master_entity_resolved.xlsx 1 lần duy nhất, LAZY — engine
+        chỉ dùng cho fetch_live_prices() (mỗi lần user thêm sản phẩm, main_window
+        tạo 1 engine riêng cho việc này) không tốn công đọc file ~58k dòng mỗi lần."""
+        if self._master_catalog is None:
+            with self._catalog_lock:
+                if self._master_catalog is None:
+                    self._master_catalog = load_master_catalog(log=self.log)
+        return self._master_catalog
 
-    def find_catalog_item_by_url(self, url: str) -> CatalogItem | None:
-        return self.cache.catalog_find_by_url(url)
+    def warm_master_catalog(self) -> int:
+        """Nạp trước catalog (gọi từ thread nền lúc app khởi động — xem
+        main_window `_warm_catalog_worker`) để lần gõ tìm đầu tiên của user không
+        phải đợi ~vài chục giây đọc file ngay trên UI thread. Trả về số sản phẩm."""
+        return len(self._ensure_master_catalog())
+
+    def add_manual_product(self, urls: dict[str, str], canonical_name: str) -> list[CatalogItem]:
+        """Thêm 1 sản phẩm MỚI thủ công qua GUI (dán URL từng site — xem
+        `gui.main_window._save_manual_product`): tách `product_id` CƠ HỌC từ URL
+        (`utils.url_detect`, không gọi mạng), ghi vào
+        catalog_master_entity_resolved.xlsx (`utils.catalog_master.append_manual_product`
+        — CHẬM, PHẢI gọi trong thread nền phía GUI), rồi thêm luôn vào
+        `self._master_catalog` đang có sẵn trong bộ nhớ (nếu đã warm-up) để có ngay,
+        không cần đợi đọc lại cả file.
+
+        `urls`: {site_id: url} — site rỗng/không tách được product_id bị bỏ qua,
+        không chặn các site khác. Trả về [] nếu KHÔNG site nào tách được (không ghi
+        gì vào file trong trường hợp đó)."""
+        items: list[CatalogItem] = []
+        for site_id, url in urls.items():
+            url = (url or "").strip()
+            if not url:
+                continue
+            product_id = detect_product_id(site_id, url)
+            if not product_id:
+                continue
+            source = getattr(CRAWLER_REGISTRY.get(site_id), "source_name", None)
+            if source is None:
+                continue
+            items.append(CatalogItem(
+                product_id=product_id,
+                drug_name=canonical_name,
+                search_name=strip_accents(canonical_name).lower(),
+                source=source,
+                source_url=url,
+            ))
+
+        if not items:
+            return []
+
+        master_id = append_manual_product(items, canonical_name)
+        for item in items:
+            item.master_product_id = master_id
+
+        # Lock chung với _ensure_master_catalog — thêm sản phẩm mới thường chạy ở
+        # thread nền (xem gui.main_window._save_manual_product_worker) trong khi UI
+        # thread có thể đang gọi suggest_catalog() đọc cùng list này.
+        with self._catalog_lock:
+            if self._master_catalog is not None:
+                self._master_catalog.extend(items)
+
+        return items
+
+    def set_manual_listing(
+        self, master_product_id: str, site_id: str, url: str, canonical_name: str
+    ) -> CatalogItem | None:
+        """Thêm/sửa URL 1 site cho 1 sản phẩm ĐÃ CÓ trong 'Đã chọn' (gắn vào
+        `master_product_id` có sẵn — xem
+        `gui.main_window._on_detail_row_double_click`). Khác `add_manual_product`
+        (luôn tạo sản phẩm/`master_product_id` MỚI). Trả CatalogItem mới nếu tách
+        `product_id` thành công + ghi file OK; None nếu URL không tách được (không
+        ghi gì) — GUI tự bỏ qua, không chặn thao tác khác."""
+        product_id = detect_product_id(site_id, url)
+        if not product_id:
+            return None
+        source = getattr(CRAWLER_REGISTRY.get(site_id), "source_name", None)
+        if source is None:
+            return None
+
+        item = CatalogItem(
+            product_id=product_id,
+            drug_name=canonical_name,
+            search_name=strip_accents(canonical_name).lower(),
+            source=source,
+            source_url=url,
+            master_product_id=master_product_id,
+        )
+        append_or_update_listing(master_product_id, item, canonical_name)
+
+        with self._catalog_lock:
+            if self._master_catalog is not None:
+                self._master_catalog = [
+                    it for it in self._master_catalog
+                    if not (it.master_product_id == master_product_id and it.source == source)
+                ]
+                self._master_catalog.append(item)
+
+        return item
+
+    def suggest_catalog(self, prefix: str, limit: int = 30) -> list[CatalogItem]:
+        """Trả tối đa `limit` nhóm khớp, gồm đủ mọi listing/site của từng nhóm."""
+        q = prefix.strip().lower()
+        catalog = self._ensure_master_catalog()
+        selected_groups: set[str] = set()
+        for item in catalog:
+            if q and q not in item.drug_name.lower() and q not in item.search_name:
+                continue
+            group_key = item.master_product_id or item.drug_name
+            if group_key not in selected_groups and len(selected_groups) >= limit:
+                continue
+            selected_groups.add(group_key)
+        return [
+            item
+            for item in catalog
+            if (item.master_product_id or item.drug_name) in selected_groups
+        ]
 
     def find_by_name(self, name: str):
         return self.cache.find_by_name(name)
@@ -215,64 +365,7 @@ class CrawlerEngine:
     def get_history(self, drug_name: str) -> list[dict]:
         return self.cache.get_history(drug_name)
 
-    # ----------------------------------------------------- catalog + watchlist
-    async def crawl_catalog(
-        self,
-        site_ids: list[str] | None = None,
-        force_refresh: bool = False,
-        progress: ProgressFn | None = None,
-    ) -> int:
-        """Crawl catalog (all products, id+name only) for selected sites.
-
-        Reuses crawler.crawl('') → converts to CatalogItem → upserts.
-        Skips sites with fresh catalog (age < catalog_ttl_hours) unless force_refresh.
-        `progress(done, total)` được gọi sau MỖI site (dù skip/lỗi/thành công) — dùng
-        cho GUI full-scan hiển thị tiến độ (xem gui/main_window.py `_run_full_scan_worker`).
-        """
-        targets = site_ids or [s.id for s in self.available_sites()]
-        total = len(targets)
-        total_stored = 0
-        for done, site_id in enumerate(targets, start=1):
-            try:
-                config = self.sites.get(site_id)
-                crawler_cls = CRAWLER_REGISTRY.get(site_id)
-                if config is None or crawler_cls is None:
-                    continue
-                if not force_refresh:
-                    source_name = getattr(crawler_cls, "source_name", None)
-                    source_val = source_name.value if source_name else (config.name or site_id)
-                    age = self.cache.catalog_age_hours(source_val)
-                    if age is not None and age < self.watchlist_config.catalog_ttl_hours:
-                        self.log(f"[{site_id}] Catalog fresh ({age:.1f}h) — bỏ qua.")
-                        continue
-                crawler: BaseCrawler = crawler_cls(config, log=self.log)
-                try:
-                    async with crawler:
-                        prices = await crawler.crawl_all()
-                except Exception as exc:
-                    self.log(f"[{site_id}] LỖI catalog: {exc}")
-                    continue
-                items = [
-                    CatalogItem(
-                        product_id=p.product_id,
-                        drug_name=p.drug_name,
-                        search_name=strip_accents(p.drug_name).lower(),
-                        manufacturer=p.manufacturer,
-                        source=p.source,
-                        source_url=p.source_url,
-                        image_url=p.image_url,
-                    )
-                    for p in prices
-                    if p.drug_name and p.product_id
-                ]
-                stored = self.cache.upsert_catalog_items(items)
-                total_stored += stored
-                self.log(f"[{site_id}] Catalog: {stored} mục.")
-            finally:
-                if progress:
-                    progress(done, total)
-        return total_stored
-
+    # ----------------------------------------------------- watchlist
     async def refresh_watchlist_prices(self) -> int:
         """Refresh prices for all watchlist items.
 

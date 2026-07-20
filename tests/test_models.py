@@ -214,6 +214,7 @@ class TestCatalogItem:
         assert ci.manufacturer == ""
         assert ci.source == SourceName.GIATHUOCTOT
         assert ci.source_url == ""
+        assert ci.master_product_id == ""
         assert isinstance(ci.cached_at, datetime)
 
     def test_full_construct(self) -> None:
@@ -224,9 +225,11 @@ class TestCatalogItem:
             manufacturer="Traphaco",
             source=SourceName.CHOTHUOC247,
             source_url="https://example.com/p/1",
+            master_product_id="MP000001",
         )
         assert ci.search_name == "boganic forte"
         assert ci.manufacturer == "Traphaco"
+        assert ci.master_product_id == "MP000001"
 
     def test_none_fields_coerced(self) -> None:
         ci = CatalogItem(
@@ -236,11 +239,13 @@ class TestCatalogItem:
             manufacturer=None,  # type: ignore[arg-type]
             source_url=None,  # type: ignore[arg-type]
             search_name=None,  # type: ignore[arg-type]
+            master_product_id=None,  # type: ignore[arg-type]
         )
         assert ci.drug_name == ""
         assert ci.manufacturer == ""
         assert ci.source_url == ""
         assert ci.search_name == ""
+        assert ci.master_product_id == ""
 
 
 class TestWatchlistItem:
@@ -287,9 +292,7 @@ class TestWatchlistConfig:
     def test_defaults(self) -> None:
         wc = WatchlistConfig()
         assert wc.refresh_interval_minutes == 10
-        assert wc.catalog_ttl_hours == 720
 
     def test_custom_values(self) -> None:
-        wc = WatchlistConfig(refresh_interval_minutes=5, catalog_ttl_hours=72)
+        wc = WatchlistConfig(refresh_interval_minutes=5)
         assert wc.refresh_interval_minutes == 5
-        assert wc.catalog_ttl_hours == 72

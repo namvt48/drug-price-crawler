@@ -41,6 +41,15 @@ class ChoThuoc247Crawler(BaseCrawler):
         loc = resp.headers.get("location", "")
         return resp.status_code in (301, 302, 307) and "dang-nhap" in loc
 
+    def _extra_auth_state(self) -> dict:
+        # CSRF token gắn liền với session cookie (Laravel) — phải cache và
+        # phục hồi CÙNG NHAU, thiếu 1 trong 2 là lỗi HTTP 419 dù cookie vẫn
+        # còn hạn (xem crawlers/base.py `_extra_auth_state`).
+        return {"csrf": self._csrf}
+
+    def _restore_extra_auth_state(self, extra: dict) -> None:
+        self._csrf = extra.get("csrf", "")
+
     async def _login(self) -> None:
         page = await self.request_with_retry("GET", f"{BASE}/dang-nhap.html", allow_reauth=False)
         self._csrf = _extract_csrf(page.text)

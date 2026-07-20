@@ -1,8 +1,8 @@
 # --- Secrets (CRITICAL: chứa mật khẩu 9 tài khoản B2B) ---
 config/accounts.yaml
 
-# --- Output & cache (runtime, không commit) ---
-output/
+# --- Output & cache (runtime, chỉ commit catalog chuẩn để CI đóng gói) ---
+output/*
 *.csv
 *.db
 *.db-wal
@@ -41,6 +41,7 @@ license.key
 
 # --- Excel output ---
 *.xlsx
+!output/catalog_master_entity_resolved.xlsx
 
 # --- Test/coverage artifacts ---
 .coverage

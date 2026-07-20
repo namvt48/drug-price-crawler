@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 from crawlers.cache_manager import CacheManager
-from utils.models import CatalogItem, DrugPrice, SourceName, WatchlistItem
+from utils.models import DrugPrice, SourceName, WatchlistItem
 
 
 def _dp(name: str, source: SourceName = SourceName.GIATHUOCTOT, price: int = 1000) -> DrugPrice:
@@ -195,14 +195,6 @@ class TestKey:
 
 
 class TestCatalogWatchlistTables:
-    def test_catalog_table_created(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cur = cm._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='catalog'"
-        )
-        assert cur.fetchone() is not None
-        cm.close()
-
     def test_watchlist_table_created(self, tmp_path: Path) -> None:
         cm = CacheManager(tmp_path / "c.db")
         cur = cm._conn.execute(
@@ -211,39 +203,12 @@ class TestCatalogWatchlistTables:
         assert cur.fetchone() is not None
         cm.close()
 
-    def test_catalog_indexes_created(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cur = cm._conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='index' AND name IN ('idx_catalog_search','idx_catalog_name')"
-        )
-        names = [r[0] for r in cur.fetchall()]
-        assert "idx_catalog_search" in names
-        assert "idx_catalog_name" in names
-        cm.close()
-
     def test_watchlist_index_created(self, tmp_path: Path) -> None:
         cm = CacheManager(tmp_path / "c.db")
         cur = cm._conn.execute(
             "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_watchlist_site'"
         )
         assert cur.fetchone() is not None
-        cm.close()
-
-    def test_catalog_pk_composite(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm._conn.execute(
-            "INSERT INTO catalog (source, product_id, drug_name, cached_at) VALUES (?, ?, ?, ?)",
-            ("Giathuoctot", "p1", "A", time.time()),
-        )
-        cm._conn.commit()
-        cm._conn.execute(
-            "INSERT OR REPLACE INTO catalog (source, product_id, drug_name, cached_at) VALUES (?, ?, ?, ?)",
-            ("Giathuoctot", "p1", "B", time.time()),
-        )
-        cm._conn.commit()
-        cur = cm._conn.execute("SELECT drug_name FROM catalog WHERE source=? AND product_id=?",
-                               ("Giathuoctot", "p1"))
-        assert cur.fetchone()[0] == "B"
         cm.close()
 
     def test_watchlist_pk_composite(self, tmp_path: Path) -> None:
@@ -351,26 +316,6 @@ class TestCanonicalReadHelpers:
         cm.close()
 
 
-def _ci(
-    product_id: str = "p1",
-    drug_name: str = "Boganic",
-    source: SourceName = SourceName.GIATHUOCTOT,
-    search_name: str = "",
-    manufacturer: str = "",
-    source_url: str = "",
-    image_url: str = "",
-) -> CatalogItem:
-    return CatalogItem(
-        product_id=product_id,
-        drug_name=drug_name,
-        search_name=search_name or drug_name.lower(),
-        manufacturer=manufacturer,
-        source=source,
-        source_url=source_url,
-        image_url=image_url,
-    )
-
-
 def _wi(
     site_id: str = "giathuoctot",
     product_id: str = "p1",
@@ -393,139 +338,6 @@ def _wi(
         last_checked=last_checked,
         image_url=image_url,
     )
-
-
-class TestCatalogUpsert:
-    def test_upsert_and_count(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([_ci("p1", "A"), _ci("p2", "B")])
-        assert cm.catalog_count() == 2
-        cm.close()
-
-    def test_upsert_replaces_existing(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([_ci("p1", "Old")])
-        cm.upsert_catalog_items([_ci("p1", "New")])
-        assert cm.catalog_count() == 1
-        items = cm.catalog_suggest("New")
-        assert items[0].drug_name == "New"
-        cm.close()
-
-    def test_upsert_empty_list(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        assert cm.upsert_catalog_items([]) == 0
-        cm.close()
-
-    def test_count_by_source(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([
-            _ci("p1", "A", SourceName.GIATHUOCTOT),
-            _ci("p2", "B", SourceName.GIATHUOCTOT),
-            _ci("p3", "C", SourceName.CHOTHUOC247),
-        ])
-        assert cm.catalog_count("Giathuoctot") == 2
-        assert cm.catalog_count("ChoThuoc247") == 1
-        assert cm.catalog_count("ThuocSi") == 0
-        cm.close()
-
-
-class TestCatalogSuggest:
-    def test_prefix_match_drug_name(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([
-            _ci("p1", "Paracetamol"),
-            _ci("p2", "Panadol"),
-            _ci("p3", "Aspirin"),
-        ])
-        results = cm.catalog_suggest("para")
-        assert len(results) == 1
-        assert results[0].drug_name == "Paracetamol"
-        cm.close()
-
-    def test_match_via_search_name_no_sign(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([
-            _ci("p1", "Boganic", search_name="boganic"),
-            _ci("p2", "Thuốc", search_name="thuoc"),
-        ])
-        results = cm.catalog_suggest("boga")
-        assert len(results) == 1
-        assert results[0].drug_name == "Boganic"
-        cm.close()
-
-    def test_case_insensitive(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([_ci("p1", "Boganic")])
-        results = cm.catalog_suggest("BOGA")
-        assert len(results) == 1
-        cm.close()
-
-    def test_limit(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([_ci(f"p{i}", f"Drug-{i}") for i in range(10)])
-        results = cm.catalog_suggest("drug", limit=3)
-        assert len(results) == 3
-        cm.close()
-
-    def test_empty_prefix_returns_all(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([_ci("p1", "A"), _ci("p2", "B")])
-        results = cm.catalog_suggest("")
-        assert len(results) == 2
-        cm.close()
-
-    def test_returns_catalog_item_objects(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([
-            _ci("p1", "Boganic", SourceName.GIATHUOCTOT,
-                search_name="boganic", manufacturer="Traphaco",
-                source_url="https://example.com/p/1"),
-        ])
-        results = cm.catalog_suggest("boga")
-        assert len(results) == 1
-        item = results[0]
-        assert isinstance(item, CatalogItem)
-        assert item.product_id == "p1"
-        assert item.manufacturer == "Traphaco"
-        assert item.source == SourceName.GIATHUOCTOT
-        assert item.source_url == "https://example.com/p/1"
-        cm.close()
-
-
-class TestCatalogAgeAndClear:
-    def test_age_hours_returns_none_when_empty(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        assert cm.catalog_age_hours("Giathuoctot") is None
-        cm.close()
-
-    def test_age_hours_returns_value(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([_ci("p1", "A")])
-        age = cm.catalog_age_hours("Giathuoctot")
-        assert age is not None
-        assert age < 1
-        cm.close()
-
-    def test_catalog_clear_all(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([
-            _ci("p1", "A", SourceName.GIATHUOCTOT),
-            _ci("p2", "B", SourceName.CHOTHUOC247),
-        ])
-        cm.catalog_clear()
-        assert cm.catalog_count() == 0
-        cm.close()
-
-    def test_catalog_clear_by_source(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([
-            _ci("p1", "A", SourceName.GIATHUOCTOT),
-            _ci("p2", "B", SourceName.CHOTHUOC247),
-        ])
-        cm.catalog_clear("Giathuoctot")
-        assert cm.catalog_count() == 1
-        assert cm.catalog_count("ChoThuoc247") == 1
-        cm.close()
 
 
 class TestWatchlistAddRemove:
@@ -596,98 +408,7 @@ class TestWatchlistUpdatePrice:
         cm.close()
 
 
-class TestCatalogFind:
-    def test_find_by_substring(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([
-            _ci("p1", "Boganic Forte"),
-            _ci("p2", "Paracetamol"),
-        ])
-        results = cm.catalog_find("anic")
-        assert len(results) == 1
-        assert results[0].drug_name == "Boganic Forte"
-        cm.close()
-
-    def test_find_no_match(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([_ci("p1", "Boganic")])
-        assert cm.catalog_find("zzz") == []
-        cm.close()
-
-
-class TestCatalogFindByUrl:
-    """Tính năng 'Thêm bằng URL' (GUI) tra catalog theo đúng source_url."""
-
-    def test_exact_match(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([
-            _ci("p1", "Boganic Forte", source_url="https://example.com/p/boganic"),
-        ])
-        item = cm.catalog_find_by_url("https://example.com/p/boganic")
-        assert item is not None
-        assert item.drug_name == "Boganic Forte"
-        cm.close()
-
-    def test_trailing_slash_normalized(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([
-            _ci("p1", "Boganic Forte", source_url="https://example.com/p/boganic/"),
-        ])
-        item = cm.catalog_find_by_url("https://example.com/p/boganic")
-        assert item is not None
-        assert item.drug_name == "Boganic Forte"
-        cm.close()
-
-    def test_no_match_returns_none(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([_ci("p1", "Boganic", source_url="https://example.com/p/boganic")])
-        assert cm.catalog_find_by_url("https://example.com/p/other") is None
-        cm.close()
-
-    def test_empty_url_returns_none(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([_ci("p1", "Boganic", source_url="https://example.com/p/boganic")])
-        assert cm.catalog_find_by_url("   ") is None
-        cm.close()
-
-    def test_distinguishes_by_source(self, tmp_path: Path) -> None:
-        """2 site khác nhau vô tình dùng cùng product_id — source_url vẫn phải
-        phân biệt đúng site nào (không trả nhầm bản ghi)."""
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([
-            _ci("p1", "Boganic Site A", source=SourceName.GIATHUOCTOT, source_url="https://a.test/p1"),
-            _ci("p1", "Boganic Site B", source=SourceName.CHOTHUOC247, source_url="https://b.test/p1"),
-        ])
-        item = cm.catalog_find_by_url("https://b.test/p1")
-        assert item is not None
-        assert item.drug_name == "Boganic Site B"
-        assert item.source == SourceName.CHOTHUOC247
-        cm.close()
-
-
 class TestImageUrlPersistence:
-    def test_catalog_image_url_survives_upsert_suggest(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([_ci("p1", "Boganic", image_url="https://img.test/p1.jpg")])
-        results = cm.catalog_suggest("boga")
-        assert len(results) == 1
-        assert results[0].image_url == "https://img.test/p1.jpg"
-        cm.close()
-
-    def test_catalog_image_url_survives_find(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([_ci("p1", "Aspirin", image_url="https://img.test/asp.jpg")])
-        results = cm.catalog_find("aspi")
-        assert results[0].image_url == "https://img.test/asp.jpg"
-        cm.close()
-
-    def test_catalog_image_url_empty_default(self, tmp_path: Path) -> None:
-        cm = CacheManager(tmp_path / "c.db")
-        cm.upsert_catalog_items([_ci("p1", "NoImg")])
-        results = cm.catalog_suggest("noimg")
-        assert results[0].image_url == ""
-        cm.close()
-
     def test_watchlist_image_url_survives_add_get(self, tmp_path: Path) -> None:
         cm = CacheManager(tmp_path / "c.db")
         cm.add_to_watchlist(_wi(image_url="https://img.test/watch.jpg"))
@@ -708,15 +429,6 @@ class TestImageUrlPersistence:
         db = tmp_path / "old.db"
         conn = sqlite3.connect(str(db))
         conn.execute(
-            "CREATE TABLE catalog (source TEXT, product_id TEXT, drug_name TEXT,"
-            " search_name TEXT, manufacturer TEXT, source_url TEXT, cached_at REAL,"
-            " PRIMARY KEY (source, product_id))"
-        )
-        conn.execute(
-            "INSERT INTO catalog (source, product_id, drug_name, search_name, manufacturer, source_url, cached_at)"
-            " VALUES ('Giathuoctot', 'p1', 'Old', 'old', '', '', 0)"
-        )
-        conn.execute(
             "CREATE TABLE watchlist (site_id TEXT, source TEXT, product_id TEXT, drug_name TEXT,"
             " search_name TEXT, added_at REAL, last_price_vnd INTEGER, last_checked REAL,"
             " PRIMARY KEY (site_id, product_id))"
@@ -725,10 +437,6 @@ class TestImageUrlPersistence:
         conn.close()
 
         cm = CacheManager(db)
-        cols_cat = {r[1] for r in cm._conn.execute("PRAGMA table_info(catalog)").fetchall()}
         cols_wl = {r[1] for r in cm._conn.execute("PRAGMA table_info(watchlist)").fetchall()}
-        assert "image_url" in cols_cat
         assert "image_url" in cols_wl
-        results = cm.catalog_suggest("old")
-        assert results[0].image_url == ""
         cm.close()

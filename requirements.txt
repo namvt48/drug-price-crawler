@@ -6,6 +6,7 @@ pyyaml==6.0.2
 rapidfuzz==3.14.5
 openpyxl==3.1.5
 pycryptodome==3.23.0   # thuocsi.vn mã hoá giá AES-CBC phía client — xem crawlers/b2b/thuocsi.py
+sv_ttk==2.6.1          # theme ttk kiểu Windows 11 — xem gui/main_window.py __init__
 
 # Chỉ dùng khi build .exe (Windows):
 # pyinstaller==6.10.0

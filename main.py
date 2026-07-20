@@ -6,7 +6,39 @@
 
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 import sys
+
+
+def _configure_tk_input_method() -> None:
+    """Point Tk at a running Fcitx5 XIM server before the first root opens.
+
+    Desktop launchers can leave ``XMODIFIERS=@im=ibus`` behind after the user
+    switches to Fcitx5. Tk uses XIM directly, so that stale selector prevents
+    composed Vietnamese text even though GTK and Qt applications still work.
+    """
+    if not sys.platform.startswith("linux"):
+        return
+    if os.environ.get("XMODIFIERS") == "@im=fcitx":
+        return
+
+    remote = shutil.which("fcitx5-remote")
+    if remote is None:
+        return
+    try:
+        probe = subprocess.run(
+            (remote,),
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    if probe.returncode == 0:
+        os.environ["XMODIFIERS"] = "@im=fcitx"
 
 
 def main() -> int:
@@ -21,6 +53,8 @@ def main() -> int:
         from cli import main as cli_main
 
         return cli_main()
+
+    _configure_tk_input_method()
 
     if not trial.is_valid:
         import tkinter as tk

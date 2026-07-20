@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from utils.models import CatalogItem, DrugPrice, SourceName, WatchlistItem
+from utils.models import DrugPrice, SourceName, WatchlistItem
 
 
 class CacheManager:
@@ -23,6 +23,11 @@ class CacheManager:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL;")
+        # UI thread (đọc, engine dài hạn) và worker thread (full scan/crawl, engine
+        # riêng) mở 2 connection khác nhau tới CÙNG file. Mặc định busy_timeout=0
+        # nghĩa là đụng lock cái là raise "database is locked" ngay — đặt timeout
+        # để connection kia tự đợi thay vì lỗi giữa lúc đang crawl.
+        self._conn.execute("PRAGMA busy_timeout=5000;")
         self._init_schema()
 
     def _init_schema(self) -> None:
@@ -51,28 +56,6 @@ class CacheManager:
             )
             """
         )
-        # Catalog: danh mục sản phẩm (id + tên, KHÔNG có giá) — crawl 1 lần, TTL dài.
-        self._conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS catalog (
-                source       TEXT NOT NULL,
-                product_id   TEXT NOT NULL,
-                drug_name    TEXT NOT NULL,
-                search_name  TEXT NOT NULL DEFAULT '',
-                manufacturer TEXT NOT NULL DEFAULT '',
-                source_url   TEXT NOT NULL DEFAULT '',
-                image_url    TEXT NOT NULL DEFAULT '',
-                cached_at    REAL NOT NULL,
-                PRIMARY KEY (source, product_id)
-            )
-            """
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_catalog_search ON catalog (search_name)"
-        )
-        self._conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_catalog_name ON catalog (drug_name)"
-        )
         # Watchlist: sản phẩm user chọn theo dõi giá — refresh định kỳ.
         self._conn.execute(
             """
@@ -98,7 +81,7 @@ class CacheManager:
 
     def _migrate_add_image_url(self) -> None:
         """ADD COLUMN image_url cho DB cũ chưa có cột này (SQLite không có IF NOT EXISTS cho ADD)."""
-        for table in ("catalog", "watchlist"):
+        for table in ("watchlist",):
             cols = {r[1] for r in self._conn.execute(f"PRAGMA table_info({table})").fetchall()}
             if "image_url" not in cols:
                 self._conn.execute(f"ALTER TABLE {table} ADD COLUMN image_url TEXT NOT NULL DEFAULT ''")
@@ -291,117 +274,6 @@ class CacheManager:
     def clear(self) -> None:
         self._conn.execute("DELETE FROM crawl_cache;")
         self._conn.commit()
-
-    # ----------------------------------------------------------- catalog
-    def upsert_catalog_items(self, items: list[CatalogItem]) -> int:
-        """Upsert catalog items (INSERT OR REPLACE). Trả về số dòng lưu."""
-        if not items:
-            return 0
-        rows = [
-            (i.source.value, i.product_id, i.drug_name, i.search_name,
-             i.manufacturer, i.source_url, i.image_url, i.cached_at.timestamp())
-            for i in items
-        ]
-        self._conn.executemany(
-            """
-            INSERT OR REPLACE INTO catalog
-                (source, product_id, drug_name, search_name, manufacturer, source_url, image_url, cached_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            rows,
-        )
-        self._conn.commit()
-        return len(rows)
-
-    def catalog_suggest(self, prefix: str, limit: int = 30) -> list[CatalogItem]:
-        """Catalog items where drug_name OR search_name matches prefix (case-insensitive)."""
-        q = f"%{prefix.strip().lower()}%"
-        cur = self._conn.execute(
-            """
-            SELECT source, product_id, drug_name, search_name, manufacturer, source_url, image_url, cached_at
-            FROM catalog
-            WHERE lower(drug_name) LIKE ? OR lower(search_name) LIKE ?
-            ORDER BY drug_name
-            LIMIT ?
-            """,
-            (q, q, limit),
-        )
-        return [self._row_to_catalog_item(r) for r in cur.fetchall()]
-
-    def catalog_find(self, query: str, limit: int = 50) -> list[CatalogItem]:
-        """Find catalog items by substring (drug_name or search_name)."""
-        q = f"%{query.strip().lower()}%"
-        cur = self._conn.execute(
-            """
-            SELECT source, product_id, drug_name, search_name, manufacturer, source_url, image_url, cached_at
-            FROM catalog
-            WHERE lower(drug_name) LIKE ? OR lower(search_name) LIKE ?
-            ORDER BY drug_name
-            LIMIT ?
-            """,
-            (q, q, limit),
-        )
-        return [self._row_to_catalog_item(r) for r in cur.fetchall()]
-
-    def catalog_find_by_url(self, url: str) -> CatalogItem | None:
-        """Tra 1 item catalog theo đúng source_url — dùng cho tính năng 'Thêm bằng
-        URL' (GUI dán URL sản phẩm copy từ 1 trong 9 site). Bỏ dấu '/' cuối ở cả 2
-        phía để không lệch do copy-paste (URL kèm/không kèm trailing slash)."""
-        normalized = url.strip().rstrip("/")
-        if not normalized:
-            return None
-        cur = self._conn.execute(
-            """
-            SELECT source, product_id, drug_name, search_name, manufacturer, source_url, image_url, cached_at
-            FROM catalog
-            WHERE rtrim(source_url, '/') = ?
-            LIMIT 1
-            """,
-            (normalized,),
-        )
-        row = cur.fetchone()
-        return self._row_to_catalog_item(row) if row else None
-
-    def catalog_age_hours(self, source: str) -> float | None:
-        """Age in hours of newest catalog entry for a source (None if no entries)."""
-        cur = self._conn.execute(
-            "SELECT MAX(cached_at) FROM catalog WHERE source = ?",
-            (source,),
-        )
-        row = cur.fetchone()
-        if row is None or row[0] is None:
-            return None
-        return (time.time() - row[0]) / 3600.0
-
-    def catalog_count(self, source: str | None = None) -> int:
-        """Count catalog items, optionally filtered by source."""
-        if source is not None:
-            cur = self._conn.execute("SELECT COUNT(*) FROM catalog WHERE source = ?", (source,))
-        else:
-            cur = self._conn.execute("SELECT COUNT(*) FROM catalog")
-        return cur.fetchone()[0]
-
-    def catalog_clear(self, source: str | None = None) -> None:
-        """Clear catalog entries, optionally per-source."""
-        if source is not None:
-            self._conn.execute("DELETE FROM catalog WHERE source = ?", (source,))
-        else:
-            self._conn.execute("DELETE FROM catalog")
-        self._conn.commit()
-
-    @staticmethod
-    def _row_to_catalog_item(r: tuple[Any, ...]) -> CatalogItem:
-        from datetime import datetime as _dt
-        return CatalogItem(
-            source=SourceName(r[0]),
-            product_id=r[1],
-            drug_name=r[2],
-            search_name=r[3],
-            manufacturer=r[4],
-            source_url=r[5],
-            image_url=r[6],
-            cached_at=_dt.fromtimestamp(r[7]),
-        )
 
     # --------------------------------------------------------- watchlist
     def add_to_watchlist(self, item: WatchlistItem) -> None:

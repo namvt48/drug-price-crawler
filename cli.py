@@ -33,7 +33,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument("--no-cache", action="store_true", help="Bỏ qua cache, luôn crawl mới.")
     p.add_argument("--list-sites", action="store_true", help="Liệt kê site khả dụng rồi thoát.")
     p.add_argument("--history", default=None, metavar="NAME", help="In diễn biến giá của một thuốc (từ price_history) rồi thoát.")
-    p.add_argument("--crawl-catalog", action="store_true", help="Crawl catalog (id+tên, không giá) cho các site được chọn rồi thoát.")
     p.add_argument("--watchlist", action="store_true", help="In watchlist hiện tại rồi thoát.")
     p.add_argument("--add-watchlist", default=None, metavar="QUERY", help="Tìm catalog theo query, thêm kết quả đầu tiên vào watchlist rồi thoát.")
     p.add_argument("--refresh-watchlist", action="store_true", help="Refresh giá watchlist 1 lần rồi thoát (không loop).")
@@ -60,12 +59,6 @@ async def _run(args: argparse.Namespace) -> int:
 
         if args.history:
             return _print_history(engine, args.history)
-
-        if args.crawl_catalog:
-            site_ids = [s.strip() for s in args.sites.split(",") if s.strip()] or None
-            count = await engine.crawl_catalog(site_ids=site_ids, force_refresh=args.no_cache)
-            _log(f"Catalog: {count} mục đã lưu.")
-            return 0
 
         if args.watchlist:
             return _print_watchlist(engine)
@@ -155,7 +148,6 @@ def _add_watchlist(engine: CrawlerEngine, query: str) -> int:
     results = engine.suggest_catalog(query, limit=10)
     if not results:
         _log(f"Không tìm thấy trong catalog: '{query}'")
-        _log("Chạy 'python cli.py --crawl-catalog' trước.")
         return 1
     engine.add_to_watchlist(results[0])
     _log(f"Đã thêm: {results[0].drug_name} [{results[0].source.value}]")

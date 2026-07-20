@@ -300,18 +300,6 @@ class TestParseArgs:
 
 
 class TestWatchlistCli:
-    def test_crawl_catalog_flag(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
-        monkeypatch.setenv("DPC_DEV", "1")
-
-        class _EngineWithCatalog(_FakeEngine):
-            async def crawl_catalog(self, site_ids=None, force_refresh=False) -> int:
-                return 5
-
-        monkeypatch.setattr(cli, "CrawlerEngine", _EngineWithCatalog)
-        rc = cli.main(["--crawl-catalog", "-s", "giathuoctot"])
-        assert rc == 0
-        out = capsys.readouterr().out
-        assert "5 mục" in out
 
     def test_watchlist_empty(self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
         monkeypatch.setenv("DPC_DEV", "1")
@@ -399,10 +387,6 @@ class TestWatchlistCli:
 
 
 class TestParseArgsWatchlist:
-    def test_crawl_catalog(self) -> None:
-        ns = cli._parse_args(["--crawl-catalog"])
-        assert ns.crawl_catalog is True
-
     def test_watchlist(self) -> None:
         ns = cli._parse_args(["--watchlist"])
         assert ns.watchlist is True

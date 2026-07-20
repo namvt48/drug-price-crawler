@@ -53,6 +53,8 @@ python main.py        # không tham số → mở GUI
 Chọn nguồn (checkbox) → nhập từ khóa → chọn file CSV → **Bắt đầu**. Log + progress
 hiện real-time; crawl chạy ở thread riêng nên không treo cửa sổ.
 
+Bản dùng thử có hiệu lực **14 ngày** kể từ lần mở đầu tiên trên máy.
+
 - Gợi ý thuốc gom theo **tên canonical** — các biến thể cùng thuốc từ nhiều nguồn
   gộp về một dòng (dùng `utils/normalizer.py` + `config/name_aliases.yaml`).
 - Cột **Rẻ nhất ★** hiện nguồn giá thấp nhất; trong chuỗi giá, nguồn rẻ nhất đánh dấu ★.
@@ -64,8 +66,21 @@ hiện real-time; crawl chạy ở thread riêng nên không treo cửa sổ.
 build.bat
 ```
 
-Kết quả: `dist\DrugPriceCrawler.exe` + `dist\config\accounts.yaml` (điền tài khoản).
-`accounts.yaml` đặt **cạnh** file `.exe`, không nhúng vào binary (bảo mật + sửa được).
+Kết quả gồm `dist\DrugPriceCrawler.exe`, config mẫu và catalog sản phẩm chuẩn:
+
+```text
+dist/
+├── DrugPriceCrawler.exe
+├── config/
+│   ├── accounts.yaml
+│   └── name_aliases.yaml
+└── output/
+    └── catalog_master_entity_resolved.xlsx
+```
+
+`accounts.yaml` và catalog đặt **cạnh** file `.exe`, không nhúng vào binary để
+giữ mật khẩu bên ngoài executable và cho phép app cập nhật catalog. GitHub Actions
+upload nguyên cấu trúc này trong artifact `DrugPriceCrawler-windows`.
 
 ## Kiến trúc
 

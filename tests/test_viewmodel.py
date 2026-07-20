@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from gui import viewmodel as vm
-from utils.models import CatalogItem, DrugPrice, SourceName, WatchlistItem
+from utils.models import CatalogItem, DrugPrice, SourceName
 
 
 def _dp(name: str, source: SourceName = SourceName.GIATHUOCTOT, price: int = 1000, display: str = "") -> DrugPrice:
@@ -14,8 +14,11 @@ def _ci(
     name: str,
     product_id: str = "p1",
     source: SourceName = SourceName.GIATHUOCTOT,
+    master_product_id: str = "",
 ) -> CatalogItem:
-    return CatalogItem(product_id=product_id, drug_name=name, source=source)
+    return CatalogItem(
+        product_id=product_id, drug_name=name, source=source, master_product_id=master_product_id
+    )
 
 
 class TestBuildGroups:
@@ -47,13 +50,13 @@ class TestBuildGroups:
 
 
 class TestBuildCatalogGroups:
-    """Như TestBuildGroups nhưng giữ nguyên CatalogItem (cần source+product_id để
-    live-fetch giá — xem engine.fetch_live_prices)."""
+    """Gom theo master_product_id (đã gộp sẵn bởi entity-resolution trong
+    catalog_master_entity_resolved.xlsx) — không fuzzy-match lại như build_groups."""
 
-    def test_variants_merged_keep_catalog_items(self) -> None:
+    def test_same_master_id_merged(self) -> None:
         items = [
-            _ci("Boganic Nén Bao Đường Traphaco (H/100V)", product_id="p1"),
-            _ci("Boganic bao duong H/5 vi x 20v Traphaco", product_id="p2"),
+            _ci("Boganic Chuẩn", product_id="p1", source=SourceName.GIATHUOCTOT, master_product_id="MP1"),
+            _ci("Boganic Chuẩn", product_id="p2", source=SourceName.CHOTHUOC247, master_product_id="MP1"),
         ]
         groups = vm.build_catalog_groups(items, aliases={})
         assert len(groups) == 1
@@ -61,21 +64,24 @@ class TestBuildCatalogGroups:
         assert {v.product_id for v in variants} == {"p1", "p2"}
         assert all(isinstance(v, CatalogItem) for v in variants)
 
-    def test_different_products_stay_separate(self) -> None:
-        items = [_ci("Boganic bao duong Traphaco"), _ci("Panadol Extra GSK")]
+    def test_different_master_ids_stay_separate(self) -> None:
+        items = [
+            _ci("Boganic Chuẩn", product_id="p1", master_product_id="MP1"),
+            _ci("Panadol Extra GSK", product_id="p2", master_product_id="MP2"),
+        ]
         groups = vm.build_catalog_groups(items, aliases={})
         assert len(groups) == 2
 
-    def test_alias_overrides_auto_grouping(self) -> None:
-        items = [_ci("Boganic bao duong Traphaco", product_id="p1")]
-        aliases = {"boganic bao duong traphaco": "Boganic Chuẩn"}
+    def test_alias_overrides_display_name(self) -> None:
+        items = [_ci("Boganic Chuẩn", product_id="p1", master_product_id="MP1")]
+        aliases = {"boganic chuẩn": "Boganic Alias"}
         groups = vm.build_catalog_groups(items, aliases=aliases)
-        assert "Boganic Chuẩn" in groups
-        assert [v.product_id for v in groups["Boganic Chuẩn"]] == ["p1"]
+        assert "Boganic Alias" in groups
+        assert [v.product_id for v in groups["Boganic Alias"]] == ["p1"]
 
-    def test_same_name_multiple_sources_both_kept(self) -> None:
-        """Cùng tên thuốc ở 2 site khác nhau — cả 2 CatalogItem phải còn trong nhóm
-        (không bị group_names làm mất do chỉ thao tác trên string)."""
+    def test_missing_master_id_falls_back_to_drug_name(self) -> None:
+        """CatalogItem không có master_product_id (vd dựng thủ công) vẫn gộp hợp lý
+        theo drug_name thay vì lỗi hoặc tách rời."""
         items = [
             _ci("Boganic", product_id="p1", source=SourceName.GIATHUOCTOT),
             _ci("Boganic", product_id="p2", source=SourceName.CHOTHUOC247),
@@ -141,6 +147,102 @@ class TestFormatPrices:
         assert s == "Giathuoctot"
 
 
+def _site(name: str, source: SourceName) -> vm.SiteDescriptor:
+    return {"name": name, "source": source}
+
+
+class TestPriceCellsBySource:
+    def test_shows_all_sites_not_just_ones_with_records(self) -> None:
+        sites = [
+            _site("Giathuoctot", SourceName.GIATHUOCTOT),
+            _site("ChoThuoc247", SourceName.CHOTHUOC247),
+        ]
+        items = [_ci("A", source=SourceName.GIATHUOCTOT), _ci("A", source=SourceName.CHOTHUOC247)]
+        records = [_dp("A", SourceName.GIATHUOCTOT, 2000, "2.000đ")]
+        cells = vm.price_cells_by_source(sites, items, records)
+        assert cells == ["★2.000đ", "lỗi giá"]
+
+    def test_cheapest_starred(self) -> None:
+        sites = [
+            _site("Giathuoctot", SourceName.GIATHUOCTOT),
+            _site("ThuocSi", SourceName.THUOCSI),
+        ]
+        items = [_ci("A", source=SourceName.GIATHUOCTOT), _ci("A", source=SourceName.THUOCSI)]
+        records = [
+            _dp("A", SourceName.GIATHUOCTOT, 2000, "2.000đ"),
+            _dp("A", SourceName.THUOCSI, 1500, "1.500đ"),
+        ]
+        cells = vm.price_cells_by_source(sites, items, records)
+        assert cells == ["2.000đ", "★1.500đ"]
+
+    def test_not_in_group_shows_no_product(self) -> None:
+        sites = [_site("ThuocHaPu", SourceName.THUOCHAPU)]
+        cells = vm.price_cells_by_source(sites, items=[], records=[])
+        assert cells == ["không có SP"]
+
+    def test_hidden_price_shows_placeholder(self) -> None:
+        sites = [_site("Giathuoctot", SourceName.GIATHUOCTOT)]
+        items = [_ci("A", source=SourceName.GIATHUOCTOT)]
+        records = [_dp("A", SourceName.GIATHUOCTOT, price=0)]
+        cells = vm.price_cells_by_source(sites, items, records)
+        assert cells == ["giá ẩn"]
+
+    def test_empty_sites(self) -> None:
+        assert vm.price_cells_by_source([], [], []) == []
+
+
+class TestProductDetailRows:
+    def test_priced_site_includes_manufacturer_and_url(self) -> None:
+        sites = [_site("Giathuoctot", SourceName.GIATHUOCTOT)]
+        items = [_ci("A", source=SourceName.GIATHUOCTOT)]
+        rec = DrugPrice(
+            drug_name="A", price_vnd=2000, price_display="2.000đ",
+            source=SourceName.GIATHUOCTOT, manufacturer="Traphaco",
+            source_url="https://example.com/a",
+        )
+        rows = vm.product_detail_rows(sites, items, [rec])
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["site"] == "Giathuoctot"
+        assert row["status"] == "★2.000đ"
+        assert row["manufacturer"] == "Traphaco"
+        assert row["url"] == "https://example.com/a"
+        assert row["updated"] != "—"
+
+    def test_missing_manufacturer_shows_placeholder(self) -> None:
+        sites = [_site("Giathuoctot", SourceName.GIATHUOCTOT)]
+        items = [_ci("A", source=SourceName.GIATHUOCTOT)]
+        rec = _dp("A", SourceName.GIATHUOCTOT, 2000, "2.000đ")
+        rows = vm.product_detail_rows(sites, items, [rec])
+        assert rows[0]["manufacturer"] == "—"
+
+    def test_no_record_shows_dash_fields(self) -> None:
+        sites = [_site("ThuocHaPu", SourceName.THUOCHAPU)]
+        rows = vm.product_detail_rows(sites, items=[], records=[])
+        assert rows == [{
+            "site": "ThuocHaPu", "status": "không có SP",
+            "manufacturer": "—", "updated": "—", "url": "—",
+        }]
+
+    def test_matches_price_cells_by_source_status(self) -> None:
+        """status field phải khớp y hệt price_cells_by_source (cùng logic dùng chung)."""
+        sites = [
+            _site("Giathuoctot", SourceName.GIATHUOCTOT),
+            _site("ThuocSi", SourceName.THUOCSI),
+        ]
+        items = [_ci("A", source=SourceName.GIATHUOCTOT), _ci("A", source=SourceName.THUOCSI)]
+        records = [
+            _dp("A", SourceName.GIATHUOCTOT, 2000, "2.000đ"),
+            _dp("A", SourceName.THUOCSI, 1500, "1.500đ"),
+        ]
+        cells = vm.price_cells_by_source(sites, items, records)
+        rows = vm.product_detail_rows(sites, items, records)
+        assert [r["status"] for r in rows] == cells
+
+    def test_empty_sites(self) -> None:
+        assert vm.product_detail_rows([], [], []) == []
+
+
 class TestCheapestLabel:
     def test_label(self) -> None:
         records = [
@@ -164,163 +266,3 @@ class TestMergeSelected:
 
     def test_empty(self) -> None:
         assert vm.merge_selected({}) == []
-
-
-def _wi(
-    drug_name: str = "Boganic",
-    source: SourceName = SourceName.GIATHUOCTOT,
-    last_price_vnd: int = 67000,
-    last_checked: float = 0.0,
-    image_url: str = "",
-) -> WatchlistItem:
-    return WatchlistItem(
-        site_id="giathuoctot",
-        product_id="p1",
-        source=source,
-        drug_name=drug_name,
-        search_name=drug_name.lower(),
-        last_price_vnd=last_price_vnd,
-        last_checked=last_checked,
-        image_url=image_url,
-    )
-
-
-class TestFormatWatchlist:
-    def test_fresh_status(self) -> None:
-        from datetime import datetime
-        now = datetime.now().timestamp()
-        items = [_wi(last_checked=now)]
-        result = vm.format_watchlist(items)
-        assert len(result) == 1
-        assert result[0]["status"] == "fresh"
-        assert result[0]["price"] == "67,000đ"
-        assert result[0]["drug_name"] == "Boganic"
-
-    def test_stale_status(self) -> None:
-        from datetime import datetime
-        old = datetime.now().timestamp() - 3600
-        items = [_wi(last_checked=old)]
-        result = vm.format_watchlist(items)
-        assert result[0]["status"] == "stale"
-
-    def test_never_status(self) -> None:
-        items = [_wi(last_checked=0.0, last_price_vnd=0)]
-        result = vm.format_watchlist(items)
-        assert result[0]["status"] == "never"
-        assert result[0]["price"] == "—"
-
-    def test_multiple_items(self) -> None:
-        items = [
-            _wi(drug_name="A", source=SourceName.GIATHUOCTOT),
-            _wi(drug_name="B", source=SourceName.CHOTHUOC247, last_price_vnd=5000),
-        ]
-        result = vm.format_watchlist(items)
-        assert len(result) == 2
-        assert result[0]["drug_name"] == "A"
-        assert result[1]["source"] == "ChoThuoc247"
-
-    def test_empty(self) -> None:
-        assert vm.format_watchlist([]) == []
-
-    def test_image_url_in_output(self) -> None:
-        items = [_wi(image_url="https://img.test/view.jpg")]
-        result = vm.format_watchlist(items)
-        assert result[0]["image_url"] == "https://img.test/view.jpg"
-
-    def test_image_url_empty_default(self) -> None:
-        items = [_wi()]
-        result = vm.format_watchlist(items)
-        assert result[0]["image_url"] == ""
-
-
-class TestWatchlistSummary:
-    def test_summary(self) -> None:
-        from datetime import datetime
-        now = datetime.now().timestamp()
-        items = [
-            _wi(drug_name="A", last_price_vnd=1000, last_checked=now),
-            _wi(drug_name="B", last_price_vnd=2000, last_checked=now),
-            _wi(drug_name="C", last_price_vnd=0, last_checked=0.0),
-            _wi(drug_name="D", last_price_vnd=0, last_checked=0.0),
-        ]
-        s = vm.watchlist_summary(items)
-        assert "4 mục" in s
-        assert "2 đã có giá" in s
-        assert "2 chưa check" in s
-
-    def test_empty(self) -> None:
-        assert vm.watchlist_summary([]) == "0 mục | 0 đã có giá | 0 chưa check"
-
-
-class TestSortWatchlist:
-    def test_sort_by_name_then_source(self) -> None:
-        items = [
-            _wi(drug_name="Zinc", source=SourceName.CHOTHUOC247),
-            _wi(drug_name="Aspirin", source=SourceName.THUOCSI),
-            _wi(drug_name="Aspirin", source=SourceName.GIATHUOCTOT),
-        ]
-        sorted_items = vm.sort_watchlist(items)
-        assert sorted_items[0].drug_name == "Aspirin"
-        assert sorted_items[0].source == SourceName.GIATHUOCTOT
-        assert sorted_items[1].drug_name == "Aspirin"
-        assert sorted_items[1].source == SourceName.THUOCSI
-        assert sorted_items[2].drug_name == "Zinc"
-
-    def test_empty(self) -> None:
-        assert vm.sort_watchlist([]) == []
-
-
-class TestSearchSeedFor:
-    def test_returns_brand_token(self) -> None:
-        assert vm.search_seed_for("Boganic Nén Bao Đường Traphaco (H/100V)") == "boganic"
-
-    def test_different_variant_same_seed(self) -> None:
-        seed1 = vm.search_seed_for("Boganic Nén Bao Đường Traphaco (H/100V)")
-        seed2 = vm.search_seed_for("Boganic bao duong H/5 vi x 20v Traphaco")
-        assert seed1 == seed2 == "boganic"
-
-    def test_empty_name(self) -> None:
-        assert vm.search_seed_for("") == ""
-
-
-class TestResolveGroupForItem:
-    def test_finds_group_containing_item(self) -> None:
-        item = _ci("Boganic Nén Bao Đường Traphaco (H/100V)", product_id="p1", source=SourceName.GIATHUOCTOT)
-        sibling = _ci("Boganic bao duong H/5 vi x 20v Traphaco", product_id="p2", source=SourceName.CHOTHUOC247)
-        name, variants = vm.resolve_group_for_item(item, [item, sibling], aliases={})
-        assert {v.product_id for v in variants} == {"p1", "p2"}
-        assert name
-
-    def test_fallback_when_item_missing_from_candidates(self) -> None:
-        item = _ci("Boganic Forte", product_id="p1", source=SourceName.GIATHUOCTOT)
-        unrelated = _ci("Panadol Extra", product_id="p9", source=SourceName.THUOCSI)
-        name, variants = vm.resolve_group_for_item(item, [unrelated], aliases={})
-        assert variants == [item]
-        assert name
-
-    def test_alias_applied(self) -> None:
-        item = _ci("Boganic bao duong Traphaco", product_id="p1", source=SourceName.GIATHUOCTOT)
-        aliases = {"boganic bao duong traphaco": "Boganic Chuẩn"}
-        name, variants = vm.resolve_group_for_item(item, [item], aliases=aliases)
-        assert name == "Boganic Chuẩn"
-        assert variants == [item]
-
-
-class TestFormatScanSummary:
-    def test_under_a_minute(self) -> None:
-        s = vm.format_scan_summary(150, 9, 42.0)
-        assert s == "Đã scan lại catalog toàn bộ 9 site — 150 mục — mất 42s."
-
-    def test_over_a_minute(self) -> None:
-        s = vm.format_scan_summary(3000, 9, 125.0)
-        assert "2m05s" in s
-        assert "3,000 mục" in s
-
-    def test_zero_count(self) -> None:
-        s = vm.format_scan_summary(0, 9, 5.0)
-        assert "0 mục" in s
-        assert "9 site" in s
-
-    def test_exactly_sixty_seconds_uses_minute_format(self) -> None:
-        s = vm.format_scan_summary(10, 9, 60.0)
-        assert "1m00s" in s

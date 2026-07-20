@@ -148,8 +148,12 @@ class CatalogItem(BaseModel):
     source_url: str = ""
     image_url: str = ""
     cached_at: datetime = Field(default_factory=datetime.now)
+    master_product_id: str = ""  # id nhóm entity-resolution (catalog_master_entity_resolved.xlsx)
 
-    @field_validator("drug_name", "manufacturer", "source_url", "search_name", "image_url", mode="before")
+    @field_validator(
+        "drug_name", "manufacturer", "source_url", "search_name", "image_url", "master_product_id",
+        mode="before",
+    )
     @classmethod
     def _none_to_empty(cls, v: object) -> object:
         return "" if v is None else v
@@ -186,4 +190,3 @@ class WatchlistConfig(BaseModel):
     """
 
     refresh_interval_minutes: int = 10   # chu kỳ refresh giá watchlist
-    catalog_ttl_hours: int = 720         # 30 ngày — TTL catalog (không phải giá) trước khi crawl lại

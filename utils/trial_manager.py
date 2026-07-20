@@ -1,4 +1,4 @@
-"""Trial 7 ngày — local, không cần server.
+"""Trial 14 ngày — local, không cần server.
 
 Lưu ngày first-run + machine fingerprint vào 2 vị trí (cạnh .exe + home),
 encrypt bằng XOR + base64 (obfuscation, đủ chống user phổ thông).
@@ -11,6 +11,7 @@ chứa token HMAC-SHA256(machine_id) — sinh token bằng generate_license_toke
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -21,9 +22,14 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-TRIAL_DAYS = 7
+from pydantic import TypeAdapter, ValidationError
+
+type TrialData = dict[str, str]
+
+TRIAL_DAYS = 14
 _SECRET = b"dpc_2026_trial_x9k2m7v4q1"
 _LICENSE_SECRET = b"dpc_2026_license_x7f3k9p2m5"
+_TRIAL_DATA_ADAPTER: TypeAdapter[dict[str, str]] = TypeAdapter(dict[str, str])
 
 # Bỏ qua check khi dev (DPC_DEV=1).
 _DEV_OVERRIDE = os.environ.get("DPC_DEV") == "1"
@@ -32,7 +38,7 @@ _DEV_OVERRIDE = os.environ.get("DPC_DEV") == "1"
 UNLIMITED_LICENSE_ENABLED = False
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class TrialStatus:
     is_valid: bool
     days_remaining: int
@@ -41,6 +47,9 @@ class TrialStatus:
 
 
 class TrialManager:
+    _machine_id: str
+    _locations: list[Path]
+
     def __init__(self) -> None:
         self._machine_id = self._compute_machine_id()
         self._locations = self._storage_paths()
@@ -69,7 +78,7 @@ class TrialManager:
                 is_valid=True,
                 days_remaining=TRIAL_DAYS,
                 is_first_run=True,
-                message=f"Bản dùng thử 7 ngày — còn {TRIAL_DAYS} ngày.",
+                message=f"Bản dùng thử {TRIAL_DAYS} ngày — còn {TRIAL_DAYS} ngày.",
             )
 
         if data.get("machine_id") != self._machine_id:
@@ -108,7 +117,7 @@ class TrialManager:
                     continue
                 if hmac.compare_digest(loc.read_text().strip(), expected):
                     return True
-            except Exception:
+            except (OSError, UnicodeError):
                 continue
         return False
 
@@ -141,8 +150,8 @@ class TrialManager:
             Path.home() / ".dpc_trial",
         ]
 
-    def _read_trial(self) -> dict | None:
-        earliest: tuple[datetime, dict] | None = None
+    def _read_trial(self) -> TrialData | None:
+        earliest: tuple[datetime, TrialData] | None = None
 
         for loc in self._locations:
             try:
@@ -154,34 +163,34 @@ class TrialManager:
                 first_run = datetime.fromisoformat(data["first_run"])
                 if earliest is None or first_run < earliest[0]:
                     earliest = (first_run, data)
-            except Exception:
+            except (KeyError, OSError, TypeError, ValueError):
                 continue
 
         return earliest[1] if earliest else None
 
-    def _write_trial(self, data: dict) -> None:
+    def _write_trial(self, data: TrialData) -> None:
         raw = self._encrypt(data)
         for loc in self._locations:
             try:
                 loc.parent.mkdir(parents=True, exist_ok=True)
-                loc.write_bytes(raw)
-            except Exception:
-                pass
+                _ = loc.write_bytes(raw)
+            except OSError:
+                continue
 
     @staticmethod
-    def _encrypt(data: dict) -> bytes:
+    def _encrypt(data: TrialData) -> bytes:
         text = json.dumps(data, sort_keys=True)
         raw = text.encode()
         xored = bytes(b ^ _SECRET[i % len(_SECRET)] for i, b in enumerate(raw))
         return base64.b64encode(xored)
 
     @staticmethod
-    def _decrypt(raw: bytes) -> dict | None:
+    def _decrypt(raw: bytes) -> TrialData | None:
         try:
             xored = base64.b64decode(raw)
             text = bytes(
                 b ^ _SECRET[i % len(_SECRET)] for i, b in enumerate(xored)
             ).decode()
-            return json.loads(text)
-        except Exception:
+            return _TRIAL_DATA_ADAPTER.validate_json(text, strict=True)
+        except (binascii.Error, UnicodeDecodeError, ValidationError):
             return None

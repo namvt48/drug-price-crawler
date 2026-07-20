@@ -43,10 +43,8 @@ filters:
   min_price_vnd: 0         # 0 = không giới hạn
   max_price_vnd: 0         # 0 = không giới hạn
 
-# --- Watchlist (theo dõi giá định kỳ) — crawl catalog 1 lần, refresh giá mỗi N phút.
-# catalog_ttl_hours chỉ áp dụng cho catalog (tên+SKU, KHÔNG có giá, dùng để search
-# gợi ý). Giá luôn fetch live tại thời điểm user chọn (engine.fetch_live_prices),
-# nên TTL này để dài (30 ngày mặc định) — tên/SKU sản phẩm ít đổi.
+# --- Watchlist (theo dõi giá định kỳ) — refresh giá mỗi N phút. Catalog (tên+SKU,
+# KHÔNG có giá, dùng để search gợi ý) nạp tĩnh từ
+# output/catalog_master_entity_resolved.xlsx, không còn TTL/crawl lại.
 watchlist:
   refresh_interval_minutes: 10   # chu kỳ refresh giá watchlist
-  catalog_ttl_hours: 720          # 30 ngày — TTL catalog trước khi crawl lại

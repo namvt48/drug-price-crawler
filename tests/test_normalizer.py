@@ -40,9 +40,13 @@ class TestStripAccents:
 
 
 class TestCanonicalKey:
-    def test_basic_brand_form_maker(self) -> None:
+    """Khoá 'brand|form|strength|maker' — 4 phần (trước là 3, không có
+    strength). Xem docstring `canonical_key` cho lý do thêm strength + đổi
+    form sang "mọi token còn lại" thay vì chỉ khớp từ điển FORM_KW."""
+
+    def test_basic_brand_form_strength_maker(self) -> None:
         key = canonical_key("Boganic siro Traphaco")
-        assert key == "boganic|siro|traphaco"
+        assert key == "boganic|siro||traphaco"
 
     def test_packaging_noise_removed(self) -> None:
         key1 = canonical_key("Boganic Nén Bao Đường Traphaco (H/100V)")
@@ -51,72 +55,152 @@ class TestCanonicalKey:
 
     def test_h_slash_pattern_removed(self) -> None:
         key = canonical_key("Boganic bao duong H/5 vi x 20v Traphaco")
-        assert key.startswith("boganic|")
-        assert key.endswith("|traphaco")
+        brand, _form, _strength, maker = key.split("|", 3)
+        assert brand == "boganic"
+        assert maker == "traphaco"
 
-    def test_ml_removed(self) -> None:
+    def test_strength_kept_not_stripped(self) -> None:
+        """Khác bản cũ: hàm lượng/kích cỡ (mg/ml/g) KHÔNG còn bị xoá như rác —
+        đây chính là thứ phân biệt 2 SKU khác giá thật (vd Augmentin 500mg
+        khác 625mg)."""
         key = canonical_key("Boganic siro lọ 100ml Traphaco")
-        assert key == "boganic|siro|traphaco"
+        _brand, _form, strength, _maker = key.split("|", 3)
+        assert strength == "100ml"
+
+    def test_different_strength_different_key(self) -> None:
+        key1 = canonical_key("Augmentin 500mg")
+        key2 = canonical_key("Augmentin 625mg")
+        assert key1 != key2
+
+    def test_strength_decimal_normalized(self) -> None:
+        key = canonical_key("Augmentin 62,5mg GSK")
+        _brand, _form, strength, _maker = key.split("|", 3)
+        assert strength == "62.5mg"
+
+    def test_date_stripped_not_leaked_into_maker(self) -> None:
+        """Ngày hết hạn ("date 01/26") từng bị vơ nhầm làm maker, xé lẻ 1 sản
+        phẩm giống hệt nhau thành nhiều nhóm chỉ vì khác ngày crawl."""
+        key1 = canonical_key("Augmentin 1g GSK date 01/26")
+        key2 = canonical_key("Augmentin 1g GSK date 11/25")
+        assert key1 == key2
+        _brand, _form, _strength, maker = key1.split("|", 3)
+        assert maker == "gsk"
+
+    def test_invoice_note_stripped_not_leaked_into_maker(self) -> None:
+        """'hóa đơn' (ghi chú người bán) từng bị vơ nhầm làm maker."""
+        key1 = canonical_key("Augmentin 1g Gsk hóa đơn")
+        key2 = canonical_key("Augmentin 1g Gsk")
+        assert key1 == key2
+
+    def test_strength_inside_parens_still_captured(self) -> None:
+        """Bug thật: '(Hộp/30 ống x 8ml)' bị `_PACK_NOISE_RE` xoá nguyên cụm
+        trong ngoặc — nếu trích strength SAU bước đó thì '8ml' mất theo,
+        khiến biến thể có ngoặc và không ngoặc của CÙNG 1 sản phẩm rơi vào
+        2 bucket strength khác nhau ('8ml' vs rỗng), không bao giờ gộp được."""
+        key1 = canonical_key("A.T Hoạt huyết dưỡng não hộp 30 ống x 8ml An Thiên")
+        key2 = canonical_key("AT hoạt huyết dưỡng (Hộp/30 ống x 8ml) - An Thiên")
+        _b1, _f1, s1, _m1 = key1.split("|", 3)
+        _b2, _f2, s2, _m2 = key2.split("|", 3)
+        assert s1 == s2 == "8ml"
+
+    def test_gr_unit_recognized_as_gram(self) -> None:
+        """'gr' (viết tắt gram hay gặp) không khớp unit 'g' vì \\b đòi biên
+        từ ngay sau, mà 'r' tiếp liền không phải biên — phải khai báo riêng
+        và quy về cùng 1 dạng với 'g' (8gr == 8g)."""
+        key = canonical_key("Cao xoa bóp bạch hổ hoạt lạc cao bảo linh (l/8gr)")
+        _brand, _form, strength, _maker = key.split("|", 3)
+        assert strength == "8g"
+
+    def test_abbreviated_brand_glued(self) -> None:
+        """Brand viết tắt kiểu "A.T" bị dấu chấm tách rời thành từng ký tự
+        đơn ("a","t") — phải gộp lại thành 1 token brand ("at"), không phải
+        chỉ lấy chữ cái đầu (vô nghĩa, gây gộp nhầm mọi SP cùng hãng)."""
+        key = canonical_key("A.T Ambroxol 30mg An Thiên")
+        brand, _form, _strength, _maker = key.split("|", 3)
+        assert brand == "at"
+
+    def test_different_active_ingredient_not_collapsed(self) -> None:
+        """Trước đây 'form' chỉ khớp từ điển FORM_KW nên hoạt chất thật (vd
+        'ascorbic' vs 'zinc') bị bỏ hẳn ra khỏi khoá — 2 thuốc khác nhau hoàn
+        toàn cùng hãng/cùng hàm lượng sẽ trùng khoá. Giờ form = mọi token còn
+        lại nên bắt được khác biệt này."""
+        key1 = canonical_key("A.T Ascorbic siro lọ 60ml An Thiên")
+        key2 = canonical_key("A.T ZinC siro lọ 60ml An Thiên")
+        assert key1 != key2
 
     def test_forte_extracted(self) -> None:
         key = canonical_key("Boganic Forte hộp 5 vỉ x 10 viên nang Traphaco")
-        brand, form, maker = key.split("|")
+        brand, form, _strength, maker = key.split("|", 3)
         assert brand == "boganic"
         assert "forte" in form
         assert maker == "traphaco"
 
     def test_multiple_form_kw(self) -> None:
         key = canonical_key("Boganic Forte Premium Traphaco")
-        _, form, _ = key.split("|")
+        _, form, _, _ = key.split("|", 3)
         assert "forte" in form
         assert "premium" in form
 
     def test_maker_empty_if_last_is_form_word(self) -> None:
         key = canonical_key("Boganic siro")
-        brand, form, maker = key.split("|")
+        brand, form, _strength, maker = key.split("|", 3)
         assert maker == ""
         assert form == "siro"
 
     def test_empty_name(self) -> None:
-        assert canonical_key("") == "||"
+        assert canonical_key("") == "|||"
 
     def test_single_token(self) -> None:
         key = canonical_key("Paracetamol")
-        brand, form, maker = key.split("|")
+        brand, form, _strength, _maker = key.split("|", 3)
         assert brand == "paracetamol"
         assert form == ""
 
     def test_bao_duong_multiword(self) -> None:
         key = canonical_key("Boganic Nén Bao Đường Traphaco (H/100V)")
-        _, form, _ = key.split("|")
+        _, form, _, _ = key.split("|", 3)
         assert "bao duong" in form
 
     def test_form_sorted_alphabetically(self) -> None:
         key = canonical_key("Boganic Premium Forte Traphaco")
-        _, form, _ = key.split("|")
+        _, form, _, _ = key.split("|", 3)
         # sorted: forte before premium
         assert form == "forte premium"
+
+    def test_form_order_independent(self) -> None:
+        """Đảo thứ tự từ trong tên (không phải form-word) vẫn ra cùng khoá
+        nhờ sort — quan trọng để Stage 1 (exact match) đã tự gộp được, không
+        phải đợi Stage 2 fuzzy."""
+        key1 = canonical_key("Boganic Forte Premium Traphaco")
+        key2 = canonical_key("Boganic Premium Forte Traphaco")
+        assert key1 == key2
 
 
 class TestDisplayName:
     def test_full_key(self) -> None:
-        assert display_name("boganic|siro|traphaco") == "Boganic Siro Traphaco"
+        assert display_name("boganic|siro||traphaco") == "Boganic Siro Traphaco"
 
     def test_no_form(self) -> None:
-        assert display_name("boganic||traphaco") == "Boganic Traphaco"
+        assert display_name("boganic|||traphaco") == "Boganic Traphaco"
 
     def test_no_maker(self) -> None:
-        assert display_name("boganic|siro|") == "Boganic Siro"
+        assert display_name("boganic|siro||") == "Boganic Siro"
 
     def test_no_form_no_maker(self) -> None:
-        assert display_name("boganic||") == "Boganic"
+        assert display_name("boganic|||") == "Boganic"
 
     def test_empty_key(self) -> None:
-        assert display_name("||") == ""
+        assert display_name("|||") == ""
 
     def test_multiword_form_titled(self) -> None:
-        name = display_name("boganic|bao duong nen|traphaco")
+        name = display_name("boganic|bao duong nen||traphaco")
         assert "Bao Duong Nen" in name
+
+    def test_strength_included(self) -> None:
+        name = display_name("augmentin||1g|gsk")
+        assert "1g" in name
+        assert "Augmentin" in name
+        assert "Gsk" in name
 
 
 class TestLoadAliases:
@@ -280,3 +364,23 @@ class TestGroupNames:
         names = ["Boganic Traphaco", "Boganic siro Traphaco"]
         groups = group_names(names)
         assert len(groups) == 2
+
+    def test_different_strength_never_merged_even_if_form_matches(self) -> None:
+        """Cốt lõi của bản sửa: cùng brand/form/maker nhưng khác hàm lượng
+        (giá thật khác nhau) không bao giờ được tự gộp, dù ngưỡng fuzzy thấp."""
+        names = ["Augmentin 500mg GSK", "Augmentin 625mg GSK"]
+        groups = group_names(names, threshold=1)
+        assert len(groups) == 2
+
+    def test_different_active_ingredient_same_brand_maker_not_merged(self) -> None:
+        """Case thật đã gây gộp nhầm nghiêm trọng trước khi sửa: nhiều hoạt
+        chất khác nhau cùng hãng 'An Thiên', cùng brand viết tắt 'A.T', cùng
+        form rỗng/'siro' → từng gộp chung 1 nhóm. Giờ 'form' chứa cả tên hoạt
+        chất nên phải tách ra 3 nhóm riêng."""
+        names = [
+            "A.T Ascorbic siro lọ 60ml An Thiên",
+            "A.T Desloratadin Siro lọ 30ml An Thiên",
+            "A.T ZinC siro lọ 60ml An Thiên",
+        ]
+        groups = group_names(names)
+        assert len(groups) == 3

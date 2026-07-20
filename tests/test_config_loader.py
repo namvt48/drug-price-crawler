@@ -297,28 +297,24 @@ class TestLoadWatchlistConfig:
         wc = load_watchlist_config(tmp_path / "nonexistent.yaml")
         assert isinstance(wc, WatchlistConfig)
         assert wc.refresh_interval_minutes == 10
-        assert wc.catalog_ttl_hours == 720
 
     def test_missing_block_returns_defaults(self, tmp_path: Path) -> None:
         cfg = tmp_path / "accounts.yaml"
         cfg.write_text("sites: {}\n", encoding="utf-8")
         wc = load_watchlist_config(cfg)
         assert wc.refresh_interval_minutes == 10
-        assert wc.catalog_ttl_hours == 720
 
     def test_custom_values(self, tmp_path: Path) -> None:
         cfg = tmp_path / "accounts.yaml"
         cfg.write_text(
-            "watchlist:\n  refresh_interval_minutes: 5\n  catalog_ttl_hours: 72\n",
+            "watchlist:\n  refresh_interval_minutes: 5\n",
             encoding="utf-8",
         )
         wc = load_watchlist_config(cfg)
         assert wc.refresh_interval_minutes == 5
-        assert wc.catalog_ttl_hours == 72
 
     def test_partial_block_uses_defaults(self, tmp_path: Path) -> None:
         cfg = tmp_path / "accounts.yaml"
         cfg.write_text("watchlist:\n  refresh_interval_minutes: 15\n", encoding="utf-8")
         wc = load_watchlist_config(cfg)
         assert wc.refresh_interval_minutes == 15
-        assert wc.catalog_ttl_hours == 720
