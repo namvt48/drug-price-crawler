@@ -33,7 +33,7 @@ jobs:
           Copy-Item config/name_aliases.yaml dist/config/name_aliases.yaml
           Copy-Item output/catalog_master_entity_resolved.xlsx dist/output/catalog_master_entity_resolved.xlsx
           $required = @(
-            "dist/DrugPriceCrawler.exe",
+            "dist/PharmaPrice.exe",
             "dist/config/accounts.yaml",
             "dist/config/name_aliases.yaml",
             "dist/output/catalog_master_entity_resolved.xlsx"
@@ -46,7 +46,7 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: DrugPriceCrawler-windows
+          name: PharmaPrice-windows
           path: dist/
           if-no-files-found: error
           compression-level: 0
