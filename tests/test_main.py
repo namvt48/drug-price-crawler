@@ -80,6 +80,16 @@ class _FakeMainWindow:
         _FakeMainWindow.mainloop_calls += 1
 
 
+class _FakeTkRoot:
+    """Stand in for hidden trial-dialog roots on headless test runners."""
+
+    def withdraw(self) -> None:
+        return None
+
+    def destroy(self) -> None:
+        return None
+
+
 class TestMainBlocksOnExpiredTrial:
     def test_gui_path_returns_2_and_never_opens_window(
         self, monkeypatch: pytest.MonkeyPatch
@@ -90,6 +100,7 @@ class TestMainBlocksOnExpiredTrial:
 
         monkeypatch.setattr("utils.trial_manager.TrialManager.check", lambda self: _expired())
         monkeypatch.setattr("gui.main_window.MainWindow", _FakeMainWindow)
+        monkeypatch.setattr("tkinter.Tk", _FakeTkRoot)
         monkeypatch.setattr(
             "tkinter.messagebox.showerror",
             lambda title, msg: shown.append((title, msg)),
@@ -138,6 +149,7 @@ class TestMainAllowsValidTrial:
             "utils.trial_manager.TrialManager.check", lambda self: _valid(is_first_run=False)
         )
         monkeypatch.setattr("gui.main_window.MainWindow", _FakeMainWindow)
+        monkeypatch.setattr("tkinter.Tk", _FakeTkRoot)
         monkeypatch.setattr("tkinter.messagebox.showinfo", lambda *a, **kw: None)
         monkeypatch.setattr("sys.argv", ["main.py"])
 
@@ -180,6 +192,7 @@ class TestMainAllowsValidTrial:
             "utils.trial_manager.TrialManager.check", lambda self: _valid(is_first_run=False)
         )
         monkeypatch.setattr("gui.main_window.MainWindow", _FakeMainWindow)
+        monkeypatch.setattr("tkinter.Tk", _FakeTkRoot)
         monkeypatch.setattr(
             "tkinter.messagebox.showinfo",
             lambda title, msg: shown.append((title, msg)),
