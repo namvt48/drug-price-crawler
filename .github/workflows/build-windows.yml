@@ -3,13 +3,14 @@ name: Build Windows exe
 on:
   push:
     branches: [main]
+    tags: ["v*"]        # push tag v* -> build + tạo GitHub Release kèm .exe
   workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
     permissions:
-      contents: read
+      contents: write   # cần quyền ghi để tạo Release (bước cuối)
     steps:
       - uses: actions/checkout@v6
 
@@ -50,3 +51,21 @@ jobs:
           path: dist/
           if-no-files-found: error
           compression-level: 0
+
+      # --- Chỉ khi push tag v* : đóng gói + tạo GitHub Release (link cố định) ---
+      - name: Zip release bundle
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: Compress-Archive -Path dist/* -DestinationPath PharmaPrice-windows.zip -Force
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create ${{ github.ref_name }}
+          PharmaPrice-windows.zip
+          --repo ${{ github.repository }}
+          --title "PharmaPrice ${{ github.ref_name }}"
+          --generate-notes
