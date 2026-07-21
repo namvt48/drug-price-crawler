@@ -1,26 +1,37 @@
 # =============================================================================
 # Drug Price Crawler — Account & Site Configuration (EXAMPLE)
 # =============================================================================
-# Copy file này thành `config/accounts.yaml` và điền credentials thật.
+# Copy file này thành `config/accounts.yaml` rồi điền credentials thật.
 # `config/accounts.yaml` đã nằm trong .gitignore — KHÔNG commit mật khẩu.
-# Xem cấu trúc đầy đủ + chú thích trong docs/ và trong accounts.yaml gốc.
+#
+# File này liệt kê ĐẦY ĐỦ cả 9 site với username/password để TRỐNG, để trong
+# app (nút "⚙ Sửa tài khoản") bạn thấy hết 9 ô và biết điền vào đâu.
+# URL / auth / cache / rate_limit đã cấu hình sẵn — chỉ cần điền tài khoản.
 # =============================================================================
 
+# Cài đặt chung cho tất cả nguồn
 defaults:
   cache:
     enabled: true
-    ttl_hours: 24
+    ttl_hours: 168             # Cache kết quả 1 tuần (168h)
   auth:
-    expiry_hours: 12
-    retry_on_401: true
-    max_auth_retries: 3
+    expiry_hours: 12           # Mặc định session hết hạn sau 12h
+    retry_on_401: true         # Tự động đăng nhập lại nếu gặp 401
+    max_auth_retries: 3        # Số lần thử lại đăng nhập tối đa
   rate_limit:
-    delay_seconds: 2
-    max_retries: 3
-    retry_backoff_seconds: 5
+    delay_seconds: 2           # Delay 2s giữa requests
+    max_retries: 3             # Retry 3 lần nếu network error
+    retry_backoff_seconds: 5   # Backoff base: 5s → 10s → 20s
   user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
+# =============================================================================
+# DANH SÁCH WEBSITE (9 nguồn B2B cần auth) — điền username/password của bạn
+# =============================================================================
+
 sites:
+  # ---------------------------------------------------------------------------
+  # 1. Giathuoctot.com
+  # ---------------------------------------------------------------------------
   giathuoctot:
     enabled: true
     name: "Giá Thuốc Tốt"
@@ -28,12 +39,197 @@ sites:
     login_url: "https://www.giathuoctot.com/login"
     search_url: "https://www.giathuoctot.com/quick-order?page=1&searchTerm={keyword}"
     credentials:
-      username: "YOUR_PHONE"
-      password: "YOUR_PASSWORD"
+      username: ""
+      password: ""
     auth:
       method: form_login
       session_key: "session_id"
-    # ... 8 site còn lại tương tự (xem docs/)
+      expiry_hours: 12
+    cache:
+      enabled: true
+      ttl_hours: 168
+    rate_limit:
+      delay_seconds: 2
+
+  # ---------------------------------------------------------------------------
+  # 2. ChoThuoc247.vn
+  # ---------------------------------------------------------------------------
+  chothuoc247:
+    enabled: true
+    name: "Chợ Thuốc 247"
+    base_url: "https://chothuoc247.vn"
+    login_url: "https://chothuoc247.vn/dang-nhap.html"
+    search_url: "https://chothuoc247.vn/tim-kiem.html?search={keyword}&post_type=product"
+    credentials:
+      username: ""
+      password: ""
+    auth:
+      method: form_login
+      session_key: "PHPSESSID"
+      expiry_hours: 12
+    cache:
+      enabled: true
+      ttl_hours: 168
+    rate_limit:
+      delay_seconds: 2
+
+  # ---------------------------------------------------------------------------
+  # 3. ThuocHaPu.com
+  # ---------------------------------------------------------------------------
+  thuochapu:
+    enabled: true
+    name: "Thuốc Hà Phú"
+    base_url: "https://thuochapu.com"
+    login_url: "https://thuochapu.com/dang-nhap.html"
+    search_url: "https://thuochapu.com/search.html?q={keyword}"
+    credentials:
+      username: ""
+      password: ""
+    auth:
+      method: form_login
+      session_key: "PHPSESSID"
+      expiry_hours: 12
+    cache:
+      enabled: true
+      ttl_hours: 168
+    rate_limit:
+      delay_seconds: 2
+
+  # ---------------------------------------------------------------------------
+  # 4. ChoThuocTot.vn
+  # ---------------------------------------------------------------------------
+  chothuoctot:
+    enabled: true
+    name: "Chợ Thuốc Tốt"
+    base_url: "https://chothuoctot.vn"
+    login_url: "https://chothuoctot.vn/dang-nhap"
+    search_url: "https://chothuoctot.vn/san-pham?product_name={keyword}&product_type=&company=0&business_type=&page=1"
+    credentials:
+      username: ""
+      password: ""
+    auth:
+      method: form_login
+      session_key: "session_id"
+      expiry_hours: 12
+    cache:
+      enabled: true
+      ttl_hours: 168
+    rate_limit:
+      delay_seconds: 2
+
+  # ---------------------------------------------------------------------------
+  # 5. ThuocSi.vn  (tài khoản riêng)
+  # ---------------------------------------------------------------------------
+  thuocsi:
+    enabled: true
+    name: "Thuốc Sĩ"
+    base_url: "https://thuocsi.vn"
+    login_url: "https://thuocsi.vn/login"
+    search_url: "https://thuocsi.vn/dashboard"
+    credentials:
+      username: ""
+      password: ""
+    auth:
+      method: api_login
+      session_key: "Authorization"
+      expiry_hours: 24
+    cache:
+      enabled: true
+      ttl_hours: 168
+    rate_limit:
+      delay_seconds: 5
+      max_retries: 5
+      retry_backoff_seconds: 10
+
+  # ---------------------------------------------------------------------------
+  # 6. ThuocTot3Mien.vn
+  # ---------------------------------------------------------------------------
+  thuoctot3mien:
+    enabled: true
+    name: "Thuốc Tốt 3 Miền"
+    base_url: "https://thuoctot3mien.vn"
+    login_url: "https://thuoctot3mien.vn/dang-nhap"
+    search_url: "https://thuoctot3mien.vn/san-pham?search={keyword}"
+    credentials:
+      username: ""
+      password: ""
+    auth:
+      method: form_login
+      session_key: "session_id"
+      expiry_hours: 12
+    cache:
+      enabled: true
+      ttl_hours: 168
+    rate_limit:
+      delay_seconds: 2
+
+  # ---------------------------------------------------------------------------
+  # 7. ThuocSiSaiGon.vn  (login bằng email)
+  # ---------------------------------------------------------------------------
+  thuocsisaigon:
+    enabled: true
+    name: "Thuốc Sĩ Sài Gòn"
+    base_url: "https://thuocsisaigon.vn"
+    login_url: "https://thuocsisaigon.vn/login"
+    search_url: "https://thuocsisaigon.vn/search?type=product&q=filter=(title%3Aproduct%20contains%20{keyword})"
+    credentials:
+      username: ""
+      password: ""
+    auth:
+      method: form_login
+      session_key: "session_id"
+      expiry_hours: 12
+    cache:
+      enabled: true
+      ttl_hours: 168
+    rate_limit:
+      delay_seconds: 2
+
+  # ---------------------------------------------------------------------------
+  # 8. DuocPhamGiaSi.vn
+  # ---------------------------------------------------------------------------
+  duocphamgiasi:
+    enabled: true
+    name: "Dược Phẩm Gia Sỉ"
+    base_url: "https://duocphamgiasi.vn"
+    login_url: "https://duocphamgiasi.vn/tai-khoan"
+    search_url: "https://duocphamgiasi.vn/?post_type=product&s={keyword}"
+    credentials:
+      username: ""
+      password: ""
+    auth:
+      method: form_login
+      session_key: "wp-postpass"    # WordPress site
+      expiry_hours: 12
+    cache:
+      enabled: true
+      ttl_hours: 168
+    rate_limit:
+      delay_seconds: 2
+
+  # ---------------------------------------------------------------------------
+  # 9. Sales.BachHoaThuoc.com
+  # ---------------------------------------------------------------------------
+  bachhoathuoc:
+    enabled: true
+    name: "Bách Hóa Thuốc (Sales)"
+    base_url: "https://sales.bachhoathuoc.com"
+    login_url: "https://sales.bachhoathuoc.com/login"
+    search_url: "https://sales.bachhoathuoc.com/search?router=productListing&query={keyword}"
+    credentials:
+      username: ""
+      password: ""
+    auth:
+      method: api_login
+      session_key: "Authorization"
+      expiry_hours: 24
+    cache:
+      enabled: true
+      ttl_hours: 168
+    rate_limit:
+      delay_seconds: 5
+      max_retries: 5
+      retry_backoff_seconds: 10
 
 # --- Whitelist filter (tùy chọn) — chỉ giữ bản ghi khớp; danh sách rỗng = không lọc.
 # So khớp không phân biệt hoa thường / có dấu. CLI --manufacturer/--contains ghi đè.
