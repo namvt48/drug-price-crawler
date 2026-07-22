@@ -141,29 +141,43 @@ Bảng "Đã chọn" gồm:
 
 Ý NGHĨA CÁC TRẠNG THÁI:
 
-  - Giá dạng "111.000đ": lấy được đúng sản phẩm và có giá hợp lệ.
-    Dấu ★ cho biết đây là giá thấp nhất trong các website có giá.
+  - "★ Tốt nhất · 111.000đ" (màu xanh): lấy được đúng sản phẩm và đây là
+    giá thấp nhất trong các website có giá hợp lệ.
 
-  - "hết hàng": website đã trả tín hiệu tồn kho rõ ràng, ví dụ
+  - "Giá · 115.000đ" (màu trung tính): lấy được đúng sản phẩm và có giá
+    hợp lệ, nhưng không phải giá thấp nhất.
+
+  - "× Hết hàng" (màu cam): website đã trả tín hiệu tồn kho rõ ràng, ví dụ
     out_of_stock, sold out, available=false hoặc số lượng tồn bằng 0.
     Sản phẩm hết hàng không được tính vào cột "Rẻ nhất ★".
 
-  - "giá ẩn": đã lấy được đúng sản phẩm nhưng website không cung cấp giá
+  - "! Giá ẩn" (màu vàng): đã lấy được đúng sản phẩm nhưng website không cung cấp giá
     hợp lệ và cũng không xác nhận hết hàng. Giá bằng 0 một mình không đủ để
     kết luận sản phẩm đã hết hàng.
 
-  - "lỗi giá": không lấy được record của đúng ID/link. Nguyên nhân có thể
+  - "! Lỗi giá" (màu đỏ): không lấy được record của đúng ID/link. Nguyên nhân có thể
     là đăng nhập lỗi, link/ID sai, trang đã bị xóa, website đang chặn truy
     cập hoặc website đã thay đổi API.
 
-  - "không có SP": catalog không có listing của sản phẩm trên website đó.
+  - "— Không có SP" (màu xám): catalog không có listing của sản phẩm trên website đó.
 
-  - "chưa update": sản phẩm đã có link nhưng chưa được crawl trong phiên
+  - "… Chưa cập nhật" (màu xanh nhạt): sản phẩm đã có link nhưng chưa được crawl trong phiên
     hoặc dữ liệu đã lưu chưa được cập nhật lại.
+
+Mỗi ô giá trong bảng "Đã chọn" được tô nền trực tiếp theo trạng thái; legend
+5 màu nằm ngay phía trên để đối chiếu. Trong cửa sổ chi tiết, cả dòng của từng
+website được tô theo cùng hệ màu. Giá thật dùng chữ đậm; "Không có SP" nhỏ và
+nhẹ hơn để không lấn át dữ liệu giá. Trạng thái vẫn luôn có chữ rõ ràng nên
+không cần dựa riêng vào màu để phân biệt.
 
 Ứng dụng chỉ hiển thị "hết hàng" khi website cung cấp bằng chứng rõ ràng.
 Nếu website không công bố trạng thái tồn kho, ứng dụng giữ "giá ẩn" hoặc
 "lỗi giá" thay vì tự đoán.
+
+Khi mở dữ liệu đã lưu từ phiên bản cũ, ứng dụng tự loại các kết quả tìm theo
+tên không khớp đúng website + product ID, rồi crawl lại tuần tự các sản phẩm
+bị ảnh hưởng. Trạng thái hết hàng mới sẽ được lưu lại và vẫn giữ nguyên sau
+khi đóng/mở ứng dụng.
 
 Ứng dụng KHÔNG lấy một sản phẩm tên gần giống để lấp vào ô lỗi giá.
 Hãy mở link đã lưu trên trình duyệt và kiểm tra đúng ID, đúng quy cách.
@@ -179,9 +193,10 @@ Nếu sản phẩm chưa có trong catalog:
   2) Dán link trang chi tiết ở các website có bán. Website không có
      sản phẩm thì để trống; mỗi website chỉ có một ô link.
 
-  3) Bấm "Xác nhận". Ứng dụng tách product ID trực tiếp từ link.
-     Link không nhận diện được sẽ không được lưu. Nếu không có link hợp
-     lệ nào, ứng dụng yêu cầu nhập lại.
+  3) Bấm "Xác nhận". Ứng dụng kiểm tra đúng domain/trang chi tiết của
+     website rồi tự tách product ID trực tiếp từ link. Người dùng không
+     cần và không thể nhập product ID riêng. Link không nhận diện được sẽ
+     không được lưu. Nếu không có link hợp lệ nào, ứng dụng yêu cầu nhập lại.
 
   4) Ở màn hình kiểm tra, nhập "Tên sản phẩm". Đây là tên do bạn tự đặt,
      có thể sửa sau và không ảnh hưởng product ID.
@@ -207,8 +222,11 @@ SỬA TÊN/LINK SAU KHI THÊM:
   - Nhấp đúp hoặc nhấp chuột phải vào sản phẩm để mở bảng chi tiết.
   - Nhấp đúp dòng website để sửa tên hoặc link.
   - Sửa tên chỉ đổi nhãn hiển thị, không đổi product ID.
-  - Sửa link sẽ THAY THẾ listing hiện tại, không tạo listing thứ hai cho
-    cùng sản phẩm và website.
+  - Khi sửa link, ứng dụng bắt buộc nhận diện lại product ID từ URL mới
+    trước khi lưu. Nếu URL sai domain/path hoặc không tách được ID thì tên,
+    link và product ID đều không bị thay đổi.
+  - Link hợp lệ sẽ THAY THẾ cả link và product ID của listing hiện tại,
+    không tạo listing thứ hai cho cùng sản phẩm và website.
 
 
 --------------------------------------------------------------------

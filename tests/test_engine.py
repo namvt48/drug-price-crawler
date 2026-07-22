@@ -642,6 +642,75 @@ class TestWatchlistDelegation:
 
 
 class TestAddManualProduct:
+    def test_user_pasted_alaxan_urls_save_detected_ids(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = tmp_path / "accounts.yaml"
+        _write_config(cfg)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
+        engine._master_catalog = []
+        saved: dict[str, object] = {}
+
+        def fake_append(items, canonical_name, path=None):
+            saved["items"] = items
+            saved["name"] = canonical_name
+            return "MP-ALAXAN"
+
+        import crawlers.engine as engine_mod
+
+        monkeypatch.setattr(engine_mod, "append_manual_product", fake_append)
+        urls = {
+            "giathuoctot": (
+                "https://www.giathuoctot.com/product/"
+                "alaxan-hop-10-vi-x-10-vien-nen-united-21618636643"
+            ),
+            "chothuoc247": (
+                "https://chothuoc247.vn/san-pham/"
+                "alaxan-vi-10v-hop-10-vi-x-10-vien-united-laboratories-5026.html"
+            ),
+            "chothuoctot": (
+                "https://chothuoctot.vn/san-pham/"
+                "1623682-alaxan-united-h10v10v---bm"
+            ),
+            "thuocsi": (
+                "https://thuocsi.vn/product/"
+                "medx-alaxan-united-h10v10v-bam?isAvailable=false"
+            ),
+            "thuoctot3mien": (
+                "https://thuoctot3mien.vn/"
+                "alaxan-hop-10-vi-x-10-vien-united-p113.html"
+            ),
+            "bachhoathuoc": (
+                "https://sales.bachhoathuoc.com/"
+                "alaxan-hop-10-vi-x-10-vien-nen-united--s220900135"
+            ),
+            "thuochapu": "https://thuochapu.com/thuoc/alaxan-united.html",
+            "duocphamgiasi": "https://duocphamgiasi.vn/product/alaxan-h25-vi4v/",
+        }
+
+        items = engine.add_manual_product(urls, "Alaxan test URL")
+
+        by_source = {item.source: item.product_id for item in items}
+        assert by_source == {
+            SourceName.GIATHUOCTOT: (
+                "alaxan-hop-10-vi-x-10-vien-nen-united-21618636643"
+            ),
+            SourceName.CHOTHUOC247: "5026",
+            SourceName.CHOTHUOCTOT: "1623682",
+            SourceName.THUOCSI: "medx-alaxan-united-h10v10v-bam",
+            SourceName.THUOCTOT3MIEN: "113",
+            SourceName.BACHHOATHUOC: "220900135",
+            SourceName.THUOCHAPU: "https://thuochapu.com/thuoc/alaxan-united.html",
+            SourceName.DUOCPHAMGIASI: (
+                "https://duocphamgiasi.vn/product/alaxan-h25-vi4v/"
+            ),
+        }
+        assert saved["items"] == items
+        assert saved["name"] == "Alaxan test URL"
+        engine.close()
+
     def test_adds_detected_sites_and_writes_file(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -666,7 +735,10 @@ class TestAddManualProduct:
         items = engine.add_manual_product(
             {
                 "giathuoctot": "https://www.giathuoctot.com/product/abc-def",
-                "chothuoc247": "https://chothuoc247.vn/san-pham/999",
+                "chothuoc247": (
+                    "https://chothuoc247.vn/san-pham/"
+                    "alaxan-vi-10v-hop-10-vi-x-10-vien-united-laboratories-5026.html"
+                ),
                 "thuocsi": "",  # rỗng -> bỏ qua
                 "chothuoctot": "https://chothuoctot.vn/khong-hop-le",  # không tách được -> bỏ qua
             },
@@ -679,6 +751,8 @@ class TestAddManualProduct:
         }
         assert all(i.master_product_id == "MP999999" for i in items)
         assert all(i.drug_name == "Sản phẩm Test" for i in items)
+        by_source = {item.source: item for item in items}
+        assert by_source[SourceName.CHOTHUOC247].product_id == "5026"
         assert saved["name"] == "Sản phẩm Test"
         engine.close()
 
@@ -832,13 +906,21 @@ class TestSetManualListing:
         monkeypatch.setattr(engine_mod, "append_or_update_listing", fake_append)
 
         result = engine.set_manual_listing(
-            "MP1", "chothuoc247", "https://chothuoc247.vn/san-pham/12345", "Boganic"
+            "MP1",
+            "chothuoc247",
+            (
+                "https://chothuoc247.vn/san-pham/"
+                "alaxan-vi-10v-hop-10-vi-x-10-vien-united-laboratories-5026.html"
+            ),
+            "Boganic",
         )
         assert result is not None
-        assert result.product_id == "12345"
+        assert result.product_id == "5026"
         assert result.source == SourceName.CHOTHUOC247
         assert result.master_product_id == "MP1"
         assert saved["master_id"] == "MP1"
+        assert saved["item"].product_id == "5026"
+        assert saved["item"].source_url.endswith("-5026.html")
         assert len(engine._master_catalog) == 2
         engine.close()
 

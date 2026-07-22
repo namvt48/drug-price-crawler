@@ -191,7 +191,7 @@ class TestPriceCellsBySource:
         ]
         records = [_dp("A", SourceName.GIATHUOCTOT, 2000, "2.000đ")]
         cells = vm.price_cells_by_source(sites, items, records)
-        assert cells == ["★2.000đ", "lỗi giá"]
+        assert cells == ["★ Tốt nhất · 2.000đ", "! Lỗi giá"]
 
     def test_cheapest_starred(self) -> None:
         sites = [
@@ -207,19 +207,19 @@ class TestPriceCellsBySource:
             _dp("A", SourceName.THUOCSI, 1500, "1.500đ"),
         ]
         cells = vm.price_cells_by_source(sites, items, records)
-        assert cells == ["2.000đ", "★1.500đ"]
+        assert cells == ["Giá · 2.000đ", "★ Tốt nhất · 1.500đ"]
 
     def test_not_in_group_shows_no_product(self) -> None:
         sites = [_site("ThuocHaPu", SourceName.THUOCHAPU)]
         cells = vm.price_cells_by_source(sites, items=[], records=[])
-        assert cells == ["không có SP"]
+        assert cells == ["— Không có SP"]
 
     def test_hidden_price_shows_placeholder(self) -> None:
         sites = [_site("Giathuoctot", SourceName.GIATHUOCTOT)]
         items = [_ci("A", source=SourceName.GIATHUOCTOT)]
         records = [_dp("A", SourceName.GIATHUOCTOT, price=0)]
         cells = vm.price_cells_by_source(sites, items, records)
-        assert cells == ["giá ẩn"]
+        assert cells == ["! Giá ẩn"]
 
     def test_out_of_stock_is_not_reported_as_price_error_or_hidden(self) -> None:
         sites = [_site("ThuocTot3Mien", SourceName.THUOCTOT3MIEN)]
@@ -233,10 +233,25 @@ class TestPriceCellsBySource:
             )
         ]
 
-        assert vm.price_cells_by_source(sites, items, records) == ["hết hàng"]
+        assert vm.price_cells_by_source(sites, items, records) == ["× Hết hàng"]
 
     def test_empty_sites(self) -> None:
         assert vm.price_cells_by_source([], [], []) == []
+
+
+class TestStatusPresentation:
+    def test_five_requested_states_have_distinct_text_and_semantic_kinds(self) -> None:
+        cases = {
+            "★1.500đ": ("★ Tốt nhất · 1.500đ", "best"),
+            "2.000đ": ("Giá · 2.000đ", "price"),
+            "lỗi giá": ("! Lỗi giá", "error"),
+            "không có SP": ("— Không có SP", "missing"),
+            "hết hàng": ("× Hết hàng", "out"),
+        }
+
+        for raw, (display, kind) in cases.items():
+            assert vm.price_cell_display(raw) == display
+            assert vm.status_kind(display) == kind
 
 
 class TestProductDetailRows:
@@ -257,7 +272,7 @@ class TestProductDetailRows:
         row = rows[0]
         assert row["site"] == "Giathuoctot"
         assert row["price"] == "★2.000đ"
-        assert row["status"] == "Tốt"
+        assert row["status"] == "Tốt nhất"
         assert row["updated"] != "—"
         assert "manufacturer" not in row
 
@@ -289,7 +304,7 @@ class TestProductDetailRows:
         assert row["url"] == "https://catalog.test/a"
         assert row["price"] == "—"
         # records rỗng hoàn toàn = CHƯA crawl lần nào, không phải crawl rồi lỗi.
-        assert row["status"] == "chưa update"
+        assert row["status"] == "Chưa cập nhật"
 
     def test_status_stays_loi_gia_when_other_sites_did_crawl(self) -> None:
         """Đã crawl thật (site khác có record) nhưng site NÀY vẫn thiếu → giữ
@@ -307,7 +322,7 @@ class TestProductDetailRows:
         ]  # ThuocSi không có record
         rows = vm.product_detail_rows(sites, items, records)
         by_site = {r["site"]: r for r in rows}
-        assert by_site["ThuocSi"]["status"] == "lỗi giá"
+        assert by_site["ThuocSi"]["status"] == "Lỗi giá"
 
     def test_no_catalog_listing_shows_dash_fields(self) -> None:
         sites = [_site("ThuocHaPu", SourceName.THUOCHAPU)]
@@ -316,7 +331,7 @@ class TestProductDetailRows:
             {
                 "site": "ThuocHaPu",
                 "price": "—",
-                "status": "không có SP",
+                "status": "Không có SP",
                 "updated": "—",
                 "url": "—",
             }
@@ -331,7 +346,7 @@ class TestProductDetailRows:
         rows = vm.product_detail_rows(sites, items, records)
         row = rows[0]
         assert row["price"] == "—"
-        assert row["status"] == "giá ẩn"
+        assert row["status"] == "Giá ẩn"
         assert row["url"] == "https://catalog.test/a"  # link vẫn có dù giá ẩn
 
     def test_out_of_stock_status(self) -> None:
@@ -355,11 +370,10 @@ class TestProductDetailRows:
         row = vm.product_detail_rows(sites, items, records)[0]
 
         assert row["price"] == "—"
-        assert row["status"] == "hết hàng"
+        assert row["status"] == "Hết hàng"
 
-    def test_price_field_matches_price_cells_by_source_label_when_ok(self) -> None:
-        """price field phải khớp y hệt price_cells_by_source khi có giá thật
-        (cùng logic dùng chung) — status thì luôn là "Tốt" trong trường hợp này."""
+    def test_detail_splits_numeric_price_from_explicit_status(self) -> None:
+        """Bảng chính gộp nghĩa vào ô; bảng chi tiết tách giá và trạng thái."""
         sites = [
             _site("Giathuoctot", SourceName.GIATHUOCTOT),
             _site("ThuocSi", SourceName.THUOCSI),
@@ -372,10 +386,9 @@ class TestProductDetailRows:
             _dp("A", SourceName.GIATHUOCTOT, 2000, "2.000đ"),
             _dp("A", SourceName.THUOCSI, 1500, "1.500đ"),
         ]
-        cells = vm.price_cells_by_source(sites, items, records)
         rows = vm.product_detail_rows(sites, items, records)
-        assert [r["price"] for r in rows] == cells
-        assert all(r["status"] == "Tốt" for r in rows)
+        assert [r["price"] for r in rows] == ["2.000đ", "★1.500đ"]
+        assert [r["status"] for r in rows] == ["Có giá", "Tốt nhất"]
 
     def test_empty_sites(self) -> None:
         assert vm.product_detail_rows([], [], []) == []
@@ -387,7 +400,39 @@ class TestCheapestLabel:
             _dp("A", SourceName.GIATHUOCTOT, 2000, "2.000đ"),
             _dp("A", SourceName.THUOCSI, 1500, "1.500đ"),
         ]
-        assert vm.cheapest_label(records) == "ThuocSi: 1.500đ"
+        assert vm.cheapest_label(records) == "★ ThuocSi · 1.500đ"
+
+
+class TestReconcileRecordsWithCatalog:
+    def test_removes_legacy_name_search_results_and_requests_refresh(self) -> None:
+        items = [
+            _ci("Biotin", source=SourceName.THUOCTOT3MIEN),
+            CatalogItem(
+                product_id="646",
+                drug_name="Biotin",
+                source=SourceName.THUOCTOT3MIEN,
+            ),
+        ]
+        items[0].product_id = "645"
+        exact = DrugPrice(
+            drug_name="Biotin 5mg",
+            source=SourceName.THUOCTOT3MIEN,
+            product_id="646",
+            stock_status="out_of_stock",
+        )
+        stale_similar_name = DrugPrice(
+            drug_name="Biotin gần giống",
+            source=SourceName.THUOCTOT3MIEN,
+            product_id="999",
+            price_vnd=10000,
+        )
+
+        records, needs_refresh = vm.reconcile_records_with_items(
+            items, [stale_similar_name, exact]
+        )
+
+        assert records == [exact]
+        assert needs_refresh is True
 
     def test_all_hidden_empty(self) -> None:
         assert vm.cheapest_label([_dp("A", price=0)]) == ""

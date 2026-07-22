@@ -178,6 +178,45 @@ def _site_status(
     return "không có SP", None
 
 
+def status_kind(label: str) -> str:
+    """Đưa mọi nhãn giá/trạng thái về semantic key dùng chung cho màu UI.
+
+    Hàm chấp nhận cả nhãn ngắn nội bộ (``lỗi giá``) lẫn nhãn đã trang trí
+    (``! Lỗi giá``), để bảng chính, bảng chi tiết và màn kiểm tra sản phẩm mới
+    không tự diễn giải trạng thái theo ba cách khác nhau.
+    """
+    normalized = label.strip().casefold()
+    if "tốt nhất" in normalized or normalized.startswith("★"):
+        return "best"
+    if "hết hàng" in normalized:
+        return "out"
+    if "lỗi giá" in normalized:
+        return "error"
+    if "không có sp" in normalized:
+        return "missing"
+    if "giá ẩn" in normalized:
+        return "hidden"
+    if "chưa" in normalized or "đang" in normalized:
+        return "pending"
+    return "price"
+
+
+def price_cell_display(label: str) -> str:
+    """Nhãn rõ nghĩa cho ô giá ở bảng chính, không chỉ dựa vào màu/dấu sao."""
+    kind = status_kind(label)
+    if kind == "best":
+        return f"★ Tốt nhất · {label.removeprefix('★')}"
+    if kind == "price":
+        return f"Giá · {label}"
+    return {
+        "out": "× Hết hàng",
+        "error": "! Lỗi giá",
+        "missing": "— Không có SP",
+        "hidden": "! Giá ẩn",
+        "pending": "… Chưa cập nhật",
+    }[kind]
+
+
 def price_cells_by_source(
     sites: list[SiteDescriptor],
     items: list[CatalogItem],
@@ -195,7 +234,38 @@ def price_cells_by_source(
     for r in records:
         _ = by_source.setdefault(r.source, r)
     best = cheapest(records)
-    return [_site_status(site, catalog_sources, by_source, best)[0] for site in sites]
+    return [
+        price_cell_display(_site_status(site, catalog_sources, by_source, best)[0])
+        for site in sites
+    ]
+
+
+def reconcile_records_with_items(
+    items: list[CatalogItem], records: list[DrugPrice]
+) -> tuple[list[DrugPrice], bool]:
+    """Loại dữ liệu giá legacy không khớp chính xác catalog hiện tại.
+
+    Các bản cũ từng giữ toàn bộ kết quả tìm theo tên nên một listing có thể kéo
+    theo hàng chục thuốc gần giống. Chỉ giữ tối đa một record cho đúng cặp
+    ``(source, product_id)`` đã lưu; trả thêm cờ để GUI tự crawl lại nhóm vừa
+    được làm sạch đúng một lần.
+    """
+    record_by_identity = {
+        (record.source, record.product_id): record
+        for record in records
+        if record.product_id
+    }
+    reconciled: list[DrugPrice] = []
+    seen: set[tuple[SourceName, str]] = set()
+    for item in items:
+        identity = (item.source, item.product_id)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        record = record_by_identity.get(identity)
+        if record is not None:
+            reconciled.append(record)
+    return reconciled, len(reconciled) != len(records)
 
 
 def product_detail_rows(
@@ -241,6 +311,16 @@ def product_detail_rows(
         if never_crawled and label == "lỗi giá":
             label = "chưa update"
         is_ok = rec is not None and rec.price_vnd > 0
+        kind = status_kind(label)
+        status = {
+            "best": "Tốt nhất",
+            "price": "Có giá",
+            "out": "Hết hàng",
+            "error": "Lỗi giá",
+            "missing": "Không có SP",
+            "hidden": "Giá ẩn",
+            "pending": "Chưa cập nhật",
+        }[kind]
         updated = (
             rec.crawled_at.strftime("%H:%M %d/%m/%Y")
             if rec is not None and rec.crawled_at
@@ -250,7 +330,7 @@ def product_detail_rows(
             {
                 "site": site["name"],
                 "price": label if is_ok else "—",
-                "status": "Tốt" if is_ok else label,
+                "status": status,
                 "updated": updated,
                 "url": url_by_source.get(source) or "—",
             }
@@ -264,7 +344,7 @@ def cheapest_label(records: list[DrugPrice]) -> str:
     if best is None:
         return ""
     price = best.price_display or f"{best.price_vnd:,}đ"
-    return f"{_source_of(best)}: {price}"
+    return f"★ {_source_of(best)} · {price}"
 
 
 def merge_selected(selected: dict[str, list[DrugPrice]]) -> list[DrugPrice]:

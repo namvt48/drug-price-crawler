@@ -91,6 +91,9 @@ def _total_of(body: Any) -> int | None:
 
 class ThuocSiCrawler(BaseCrawler):
     source_name = SourceName.THUOCSI
+    # GUI lưu slug lấy trực tiếp từ URL sản phẩm. ThuocSi hiện có endpoint chi
+    # tiết ổn định theo slug, vì vậy không được fallback sang tìm bằng tên.
+    direct_fetch_supported = True
 
     def _headers(self, bearer: bool = True) -> dict[str, str]:
         h: dict[str, str] = {"Content-Type": "application/json", "Accept": "application/json"}
@@ -166,21 +169,72 @@ class ThuocSiCrawler(BaseCrawler):
         return products
 
     def _parse_product(self, raw: dict) -> DrugPrice | None:
-        name = raw.get("productName") or raw.get("name") or ""
+        # Endpoint danh sách cũ trả field phẳng; endpoint chi tiết hiện hành trả
+        # `{product: {...}, sku: {...}, isAvailable: ...}`. Hỗ trợ cả hai để
+        # không làm hỏng luồng refresh catalog/test fixture cũ.
+        product = raw.get("product") if isinstance(raw.get("product"), dict) else {}
+        sku = raw.get("sku") if isinstance(raw.get("sku"), dict) else {}
+        name = raw.get("productName") or raw.get("name") or product.get("name") or ""
         # Giá KHÔNG trả thô — trả priceEncrypted/discountPriceEncrypted (AES-CBC,
         # xem _decrypt_price). Ưu tiên discountPriceEncrypted (giá bán thật sau
         # khuyến mãi), fallback priceEncrypted (giá gốc) nếu sản phẩm không giảm giá.
-        price = _decrypt_price(raw.get("discountPriceEncrypted")) or _decrypt_price(
-            raw.get("priceEncrypted")
+        price = (
+            _decrypt_price(raw.get("discountPriceEncrypted"))
+            or _decrypt_price(sku.get("retailPriceApplyVoucherEncrypt"))
+            or _decrypt_price(raw.get("priceEncrypted"))
+            or _decrypt_price(sku.get("retailPriceValueEncrypt"))
+            or parse_price(sku.get("retailPriceValue") or 0)
         )
-        slug = raw.get("slug") or raw.get("skuCode") or raw.get("code") or raw.get("sku") or ""
+        slug = (
+            raw.get("slug")
+            or raw.get("skuCode")
+            or raw.get("code")
+            or sku.get("slug")
+            or sku.get("code")
+            or ""
+        )
         return DrugPrice(
             drug_name=name,
-            dosage_form=raw.get("volume") or raw.get("unit") or "",
+            dosage_form=(
+                raw.get("volume")
+                or raw.get("unit")
+                or product.get("volume")
+                or product.get("unit")
+                or ""
+            ),
             price_vnd=price,
             price_display=format_price(price),
             stock_status=detect_stock_status(raw),
             source=self.source_name,
-            source_url=f"{self.config.base_url}/{slug}" if slug else self.config.base_url,
+            source_url=(
+                f"{self.config.base_url}/product/{slug}"
+                if slug
+                else self.config.base_url
+            ),
             product_id=str(slug),
         )
+
+    async def fetch_price_by_id(self, product_id: str) -> DrugPrice | None:
+        """Lấy đúng một sản phẩm qua endpoint chi tiết theo slug.
+
+        Không dùng endpoint danh sách `/screen/product/list`: endpoint đó đã
+        trả 404 từ 2026-07-22 và trước đây còn ép `isAvailable=true`, khiến SKU
+        hết hàng biến mất rồi bị GUI hiểu nhầm là lỗi giá.
+        """
+        slug = product_id.strip().lower()
+        if not slug:
+            return None
+        await self.ensure_auth()
+        resp = await self.request_with_retry(
+            "GET",
+            f"{BASE}/marketplace/frontend-apis/v2/product/detail-encrypted",
+            params={"q": slug, "queryOption": "isReplacePriceAfterVoucher"},
+            headers=self._headers(),
+        )
+        if resp.status_code != 200:
+            return None
+        for raw in _walk_products(resp.json() or {}):
+            result = self._parse_product(raw)
+            if result is not None and result.product_id.lower() == slug:
+                return result
+        return None

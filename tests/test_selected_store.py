@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from utils.models import CatalogItem, DrugPrice, SourceName
+from utils.models import CatalogItem, DrugPrice, SourceName, StockStatus
 from utils.selected_store import load_selected, save_selected
 
 
@@ -40,6 +40,25 @@ class TestSaveLoadRoundtrip:
         assert [r.price_vnd for r in loaded_selected["Boganic Chuẩn"]] == [67000, 65000]
         assert {i.product_id for i in loaded_items["Boganic Chuẩn"]} == {"p1", "p2"}
         assert all(i.master_product_id == "MP1" for i in loaded_items["Boganic Chuẩn"])
+
+    def test_out_of_stock_status_survives_restart(self, tmp_path: Path) -> None:
+        path = tmp_path / "selected.json"
+        record = DrugPrice(
+            drug_name="Biotin",
+            source=SourceName.THUOCTOT3MIEN,
+            product_id="646",
+            stock_status=StockStatus.OUT_OF_STOCK,
+        )
+        item = _ci(
+            "Biotin",
+            product_id="646",
+            source=SourceName.THUOCTOT3MIEN,
+        )
+
+        save_selected({"Biotin": [record]}, {"Biotin": [item]}, path=path)
+        loaded_selected, _ = load_selected(path)
+
+        assert loaded_selected["Biotin"][0].stock_status == StockStatus.OUT_OF_STOCK
 
     def test_multiple_groups(self, tmp_path: Path) -> None:
         path = tmp_path / "selected.json"

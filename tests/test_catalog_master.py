@@ -63,7 +63,7 @@ class TestLoadMasterCatalog:
                     "PV1",
                     "Giathuoctot",
                     "p1",
-                    "https://a.test/product/p1",
+                    "https://www.giathuoctot.com/product/p1",
                     "Boganic Forte 100v",
                     "Traphaco",
                 ),
@@ -73,7 +73,7 @@ class TestLoadMasterCatalog:
                     "PV1",
                     "ChoThuoc247",
                     "2",
-                    "https://b.test/san-pham/2.html",
+                    "https://chothuoc247.vn/san-pham/2.html",
                     "Boganic H100V",
                     "",
                 ),
@@ -88,7 +88,7 @@ class TestLoadMasterCatalog:
         by_id = {it.product_id: it for it in items}
         assert by_id["p1"].source == SourceName.GIATHUOCTOT
         assert by_id["p1"].manufacturer == "Traphaco"
-        assert by_id["p1"].source_url == "https://a.test/product/p1"
+        assert by_id["p1"].source_url == "https://www.giathuoctot.com/product/p1"
         assert by_id["2"].manufacturer == ""
         assert by_id["p1"].search_name == "boganic chuan"
         assert by_id["p1"].source_drug_name == "Boganic Forte 100v"
@@ -107,7 +107,7 @@ class TestLoadMasterCatalog:
                     "PV1",
                     "Giathuoctot",
                     "alaxan-10x10",
-                    "https://x.test/product/alaxan-10x10",
+                    "https://www.giathuoctot.com/product/alaxan-10x10",
                     "Alaxan hộp 10 vỉ x 10 viên",
                     "United",
                 ),
@@ -117,7 +117,7 @@ class TestLoadMasterCatalog:
                     "PV2",
                     "Giathuoctot",
                     "alaxan-25x4",
-                    "https://x.test/product/alaxan-25x4",
+                    "https://www.giathuoctot.com/product/alaxan-25x4",
                     "Alaxan hộp 25 vỉ x 4 viên",
                     "United",
                 ),
@@ -144,7 +144,7 @@ class TestLoadMasterCatalog:
                     "PV1",
                     "Giathuoctot",
                     "p1",
-                    "https://a.test/product/p1",
+                    "https://www.giathuoctot.com/product/p1",
                     "Ten Goc",
                     "",
                 ),
@@ -161,7 +161,16 @@ class TestLoadMasterCatalog:
             master_rows=[("MP1", "Boganic Chuẩn")],
             listing_rows=[
                 ("L1", "MP1", "PV1", "KhongTonTai", "p1", "https://a.test/p1", "X", ""),
-                ("L2", "MP1", "PV1", "Giathuoctot", "p2", "https://b.test/product/p2", "Y", ""),
+                (
+                    "L2",
+                    "MP1",
+                    "PV1",
+                    "Giathuoctot",
+                    "p2",
+                    "https://www.giathuoctot.com/product/p2",
+                    "Y",
+                    "",
+                ),
             ],
         )
         items = load_master_catalog(path)
@@ -222,9 +231,36 @@ class TestLoadMasterCatalog:
             path,
             master_rows=[("MP1", "Alpha"), ("MP2", "Beta")],
             listing_rows=[
-                ("L1", "MP2", "PV2", "BachHoaThuoc", "202", "https://x.test/beta--s202", "Beta", ""),
-                ("L2", "MP1", "PV1", "BachHoaThuoc", "101", "https://x.test/alpha--s101", "Alpha", ""),
-                ("L3", "MP1", "PV1", "ThuocHaPu", "https://x.test/hapu-alpha", "https://x.test/hapu-alpha", "Alpha", ""),
+                (
+                    "L1",
+                    "MP2",
+                    "PV2",
+                    "BachHoaThuoc",
+                    "202",
+                    "https://sales.bachhoathuoc.com/beta--s202",
+                    "Beta",
+                    "",
+                ),
+                (
+                    "L2",
+                    "MP1",
+                    "PV1",
+                    "BachHoaThuoc",
+                    "101",
+                    "https://sales.bachhoathuoc.com/alpha--s101",
+                    "Alpha",
+                    "",
+                ),
+                (
+                    "L3",
+                    "MP1",
+                    "PV1",
+                    "ThuocHaPu",
+                    "https://thuochapu.com/thuoc/hapu-alpha.html",
+                    "https://thuochapu.com/thuoc/hapu-alpha.html",
+                    "Alpha",
+                    "",
+                ),
             ],
         )
 
@@ -232,7 +268,7 @@ class TestLoadMasterCatalog:
 
         assert [item.product_id for item in items] == [
             "101",
-            "https://x.test/hapu-alpha",
+            "https://thuochapu.com/thuoc/hapu-alpha.html",
             "202",
         ]
 

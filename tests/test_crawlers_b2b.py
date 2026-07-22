@@ -678,6 +678,54 @@ class TestChoThuocTot:
 
 
 class TestThuocSi:
+    def test_fetch_price_by_id_returns_unavailable_product(self) -> None:
+        """Luồng GUI lưu slug từ URL rồi phải fetch đúng slug đó, kể cả khi
+        ThuocSi đánh dấu sản phẩm không còn hàng (`isAvailable=false`)."""
+        from crawlers.b2b.thuocsi import ThuocSiCrawler
+        from utils.models import StockStatus
+
+        slug = "medx-alaxan-united-h10v10v-bam"
+        c = ThuocSiCrawler(
+            _cfg("thuocsi", "https://thuocsi.vn", manual_token="TOKEN")
+        )
+        requested_urls: list[str] = []
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            requested_urls.append(str(req.url))
+            if req.url.params.get("q") == slug:
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": [
+                            {
+                                "isAvailable": False,
+                                "product": {
+                                    "name": "Alaxan United H10V10V",
+                                    "volume": "Hộp 10 vỉ x 10 viên",
+                                },
+                                "sku": {
+                                    "slug": slug,
+                                    "status": "OUT_OF_STOCK",
+                                    "retailPriceValueEncrypt": (
+                                        "vKmvzL8un+atOKF1qqnwXA=="
+                                    ),
+                                },
+                            }
+                        ],
+                    },
+                )
+            return httpx.Response(200, json={"data": []})
+
+        _run(c.open())
+        _attach(c, handler)
+        result = _run(c.fetch_price_by_id(slug))
+
+        assert result is not None
+        assert result.product_id == slug
+        assert result.stock_status == StockStatus.OUT_OF_STOCK
+        assert any("/product/detail-encrypted" in url for url in requested_urls)
+        _run(c.close())
+
     def test_login_and_fetch_and_parse(self) -> None:
         """Endpoint/field/giá đã xác nhận sống 2026-07-11 (reverse-engineer JS bundle
         production) — bản cũ dùng {phone,...} lên /login luôn trả 401 dù mật khẩu

@@ -61,6 +61,34 @@ class DuplicateProductNameError(ValueError):
     """Tên hiển thị do người dùng đặt đã tồn tại trong catalog."""
 
 
+def _catalog_item_from_url(
+    site_id: str,
+    url: str,
+    canonical_name: str,
+    *,
+    master_product_id: str = "",
+) -> CatalogItem | None:
+    """Nguồn duy nhất chuyển URL người dùng nhập thành listing nội bộ.
+
+    Cả thêm mới và chỉnh sửa đều phải đi qua đây: xác thực URL đúng site/path,
+    tự tách ``product_id`` rồi mới dựng dữ liệu có thể ghi xuống catalog.
+    """
+    clean_url = (url or "").strip()
+    product_id = detect_product_id(site_id, clean_url)
+    source = getattr(CRAWLER_REGISTRY.get(site_id), "source_name", None)
+    if not clean_url or not product_id or source is None:
+        return None
+    clean_name = canonical_name.strip()
+    return CatalogItem(
+        product_id=product_id,
+        drug_name=clean_name,
+        search_name=strip_accents(clean_name).lower(),
+        source=source,
+        source_url=clean_url,
+        master_product_id=master_product_id,
+    )
+
+
 class CrawlerEngine:
     def __init__(
         self,
@@ -348,8 +376,8 @@ class CrawlerEngine:
         self, urls: dict[str, str], canonical_name: str
     ) -> list[CatalogItem]:
         """Thêm 1 sản phẩm MỚI thủ công qua GUI (dán URL từng site — xem
-        `gui.main_window._save_manual_product`): tách `product_id` CƠ HỌC từ URL
-        (`utils.url_detect`, không gọi mạng), ghi vào
+        `gui.main_window._save_manual_product`): xác thực URL đúng site/path rồi
+        tự tách `product_id` (`utils.url_detect`, không gọi mạng), ghi vào
         catalog_master.xlsx (`utils.catalog_master.append_manual_product`
         — CHẬM, PHẢI gọi trong thread nền phía GUI), rồi thêm luôn vào
         `self._master_catalog` đang có sẵn trong bộ nhớ (nếu đã warm-up) để có ngay,
@@ -364,24 +392,9 @@ class CrawlerEngine:
 
         items: list[CatalogItem] = []
         for site_id, url in urls.items():
-            url = (url or "").strip()
-            if not url:
-                continue
-            product_id = detect_product_id(site_id, url)
-            if not product_id:
-                continue
-            source = getattr(CRAWLER_REGISTRY.get(site_id), "source_name", None)
-            if source is None:
-                continue
-            items.append(
-                CatalogItem(
-                    product_id=product_id,
-                    drug_name=canonical_name,
-                    search_name=strip_accents(canonical_name).lower(),
-                    source=source,
-                    source_url=url,
-                )
-            )
+            item = _catalog_item_from_url(site_id, url, canonical_name)
+            if item is not None:
+                items.append(item)
 
         if not items:
             return []
@@ -414,21 +427,14 @@ class CrawlerEngine:
         (luôn tạo sản phẩm/`master_product_id` MỚI). Trả CatalogItem mới nếu tách
         `product_id` thành công + ghi file OK; None nếu URL không tách được (không
         ghi gì) — GUI tự bỏ qua, không chặn thao tác khác."""
-        product_id = detect_product_id(site_id, url)
-        if not product_id:
-            return None
-        source = getattr(CRAWLER_REGISTRY.get(site_id), "source_name", None)
-        if source is None:
-            return None
-
-        item = CatalogItem(
-            product_id=product_id,
-            drug_name=canonical_name,
-            search_name=strip_accents(canonical_name).lower(),
-            source=source,
-            source_url=url,
+        item = _catalog_item_from_url(
+            site_id,
+            url,
+            canonical_name,
             master_product_id=master_product_id,
         )
+        if item is None:
+            return None
         append_or_update_listing(master_product_id, item, canonical_name)
 
         with self._catalog_lock:
@@ -438,7 +444,7 @@ class CrawlerEngine:
                     for it in self._master_catalog
                     if not (
                         it.master_product_id == master_product_id
-                        and it.source == source
+                        and it.source == item.source
                     )
                 ]
                 self._master_catalog.append(item)

@@ -48,6 +48,64 @@ class TestDetectProductIdRealSamples:
         assert detect_product_id(site_id, url) == expected
 
 
+class TestUserEnteredProductUrls:
+    @pytest.mark.parametrize(
+        "site_id,url,expected",
+        [
+            (
+                "giathuoctot",
+                "https://www.giathuoctot.com/product/"
+                "alaxan-hop-10-vi-x-10-vien-nen-united-21618636643",
+                "alaxan-hop-10-vi-x-10-vien-nen-united-21618636643",
+            ),
+            (
+                "chothuoc247",
+                "https://chothuoc247.vn/san-pham/"
+                "alaxan-vi-10v-hop-10-vi-x-10-vien-united-laboratories-5026.html",
+                "5026",
+            ),
+            (
+                "chothuoctot",
+                "https://chothuoctot.vn/san-pham/"
+                "1623682-alaxan-united-h10v10v---bm",
+                "1623682",
+            ),
+            (
+                "thuocsi",
+                "https://thuocsi.vn/product/"
+                "medx-alaxan-united-h10v10v-bam?isAvailable=false",
+                "medx-alaxan-united-h10v10v-bam",
+            ),
+            (
+                "thuoctot3mien",
+                "https://thuoctot3mien.vn/"
+                "alaxan-hop-10-vi-x-10-vien-united-p113.html",
+                "113",
+            ),
+            (
+                "bachhoathuoc",
+                "https://sales.bachhoathuoc.com/"
+                "alaxan-hop-10-vi-x-10-vien-nen-united--s220900135",
+                "220900135",
+            ),
+            (
+                "thuochapu",
+                "https://thuochapu.com/thuoc/alaxan-united.html",
+                "https://thuochapu.com/thuoc/alaxan-united.html",
+            ),
+            (
+                "duocphamgiasi",
+                "https://duocphamgiasi.vn/product/alaxan-h25-vi4v/",
+                "https://duocphamgiasi.vn/product/alaxan-h25-vi4v/",
+            ),
+        ],
+    )
+    def test_detects_id_from_url_pasted_in_add_product_form(
+        self, site_id: str, url: str, expected: str
+    ) -> None:
+        assert detect_product_id(site_id, url) == expected
+
+
 class TestDetectProductIdEdgeCases:
     def test_empty_url_returns_none(self) -> None:
         assert detect_product_id("chothuoc247", "") is None
@@ -76,6 +134,28 @@ class TestDetectProductIdEdgeCases:
 
     def test_whitespace_trimmed(self) -> None:
         assert detect_product_id("chothuoc247", "  https://chothuoc247.vn/san-pham/123  ") == "123"
+
+    def test_chothuoc247_slug_url_uses_trailing_numeric_id(self) -> None:
+        url = (
+            "https://chothuoc247.vn/san-pham/"
+            "alaxan-vi-10v-hop-10-vi-x-10-vien-united-laboratories-5026.html"
+        )
+        assert detect_product_id("chothuoc247", url) == "5026"
+
+    @pytest.mark.parametrize(
+        "site_id,url",
+        [
+            ("chothuoc247", "https://example.com/san-pham/5026"),
+            ("giathuoctot", "https://example.com/product/alaxan-123"),
+            ("thuocsi", "not-a-url"),
+            ("thuochapu", "https://thuochapu.com/khong-phai-trang-san-pham"),
+            ("duocphamgiasi", "https://duocphamgiasi.vn/khong-phai-san-pham"),
+        ],
+    )
+    def test_rejects_wrong_domain_or_non_product_url(
+        self, site_id: str, url: str
+    ) -> None:
+        assert detect_product_id(site_id, url) is None
 
 
 class TestSuggestNameFromUrls:

@@ -91,6 +91,201 @@ _BUTTON_COLORS = {
     },
 }
 
+# Semantic palette cho trạng thái giá. Mỗi màu luôn đi cùng nhãn/ký hiệu chữ
+# (xem `gui.viewmodel.price_cell_display`) để người dùng không phải dựa riêng
+# vào khả năng phân biệt màu. Foreground/background đều có contrast cao trên
+# light theme hiện tại.
+_STATUS_COLORS = {
+    "best": {"background": "#dff3e7", "foreground": "#0b5d34"},
+    "price": {"background": "#edf1f4", "foreground": "#25313c"},
+    "error": {"background": "#fde7e7", "foreground": "#8f1d1d"},
+    "missing": {"background": "#f0f1f2", "foreground": "#4c5661"},
+    "out": {"background": "#fff0d6", "foreground": "#7a4300"},
+    "hidden": {"background": "#fff7cc", "foreground": "#6f4d00"},
+    "pending": {"background": "#e8f1fb", "foreground": "#285578"},
+}
+
+_STATUS_LEGEND = (
+    ("best", "★ Tốt nhất"),
+    ("price", "Giá thường"),
+    ("error", "! Lỗi giá"),
+    ("missing", "— Không có SP"),
+    ("out", "× Hết hàng"),
+)
+
+
+class StatusCellTreeview(ttk.Treeview):
+    """Treeview có nền semantic riêng cho từng ô trạng thái.
+
+    Tk/ttk chỉ hỗ trợ ``tag_configure`` theo *cả dòng*. Bảng chính lại có một
+    cột cho mỗi nhà thuốc, nên cùng một dòng có thể đồng thời chứa giá tốt nhất,
+    giá thường, lỗi giá, hết hàng và không có sản phẩm. Tô cả dòng sẽ làm sai
+    nghĩa. Lớp này giữ Treeview gốc làm nền cho selection/keyboard/scroll rồi
+    đặt ``tk.Label`` đúng ``bbox`` của từng cell trạng thái.
+    """
+
+    _FORWARDED_POINTER_EVENTS = (
+        "<Button-1>",
+        "<Double-Button-1>",
+        "<Button-3>",
+    )
+
+    def __init__(
+        self,
+        master,
+        *,
+        status_columns: tuple[str, ...],
+        status_font: tuple[str, int],
+        **kwargs,
+    ) -> None:
+        super().__init__(master, **kwargs)
+        self._status_columns = status_columns
+        self._status_font = status_font
+        self._cell_overlays: dict[tuple[str, str], tk.Label] = {}
+        self._overlay_redraw_job: str | None = None
+        for sequence in (
+            "<Configure>",
+            "<Expose>",
+            "<Motion>",
+            "<ButtonRelease-1>",
+            "<MouseWheel>",
+            "<Button-4>",
+            "<Button-5>",
+        ):
+            self.bind(sequence, lambda _event: self._schedule_overlay_redraw(), add="+")
+
+    def insert(self, parent, index, iid=None, **kwargs):
+        item_id = super().insert(parent, index, iid=iid, **kwargs)
+        self._schedule_overlay_redraw()
+        return item_id
+
+    def delete(self, *items) -> None:
+        doomed = set(items)
+        super().delete(*items)
+        for key, overlay in list(self._cell_overlays.items()):
+            if key[0] in doomed:
+                overlay.destroy()
+                del self._cell_overlays[key]
+        self._schedule_overlay_redraw()
+
+    def set(self, item, column=None, value=None):
+        result = super().set(item, column, value)
+        if value is not None:
+            self._schedule_overlay_redraw()
+        return result
+
+    def xview(self, *args):
+        result = super().xview(*args)
+        if args:
+            self._schedule_overlay_redraw()
+        return result
+
+    def yview(self, *args):
+        result = super().yview(*args)
+        if args:
+            self._schedule_overlay_redraw()
+        return result
+
+    def _schedule_overlay_redraw(self) -> None:
+        if self._overlay_redraw_job is not None:
+            return
+        try:
+            self._overlay_redraw_job = self.after_idle(self._redraw_cell_overlays)
+        except tk.TclError:
+            self._overlay_redraw_job = None
+
+    def _redraw_cell_overlays(self) -> None:
+        self._overlay_redraw_job = None
+        try:
+            rows = self.get_children("")
+        except tk.TclError:
+            return
+
+        visible_keys: set[tuple[str, str]] = set()
+        for item_id in rows:
+            for column in self._status_columns:
+                bbox = self.bbox(item_id, column)
+                if not bbox:
+                    continue
+                value = str(self.set(item_id, column))
+                kind = vm.status_kind(value)
+                colors = _STATUS_COLORS[kind]
+                key = (item_id, column)
+                overlay = self._cell_overlays.get(key)
+                if overlay is None:
+                    overlay = self._make_cell_overlay(item_id, column)
+                    self._cell_overlays[key] = overlay
+                font_size = (
+                    max(8, self._status_font[1] - 1)
+                    if kind == "missing"
+                    else self._status_font[1]
+                )
+                font = (
+                    self._status_font[0],
+                    font_size,
+                    "bold"
+                    if kind in {"best", "price", "error", "out"}
+                    else "normal",
+                )
+                overlay.configure(
+                    text=value,
+                    background=colors["background"],
+                    foreground=colors["foreground"],
+                    font=font,
+                )
+                x, y, width, height = bbox
+                overlay.place(
+                    x=x + 1,
+                    y=y + 1,
+                    width=max(1, width - 2),
+                    height=max(1, height - 2),
+                )
+                overlay.lift()
+                visible_keys.add(key)
+
+        for key, overlay in self._cell_overlays.items():
+            if key not in visible_keys:
+                overlay.place_forget()
+
+    def _make_cell_overlay(self, item_id: str, column: str) -> tk.Label:
+        overlay = tk.Label(
+            self,
+            anchor="center",
+            borderwidth=0,
+            padx=3,
+            pady=0,
+            takefocus=False,
+        )
+        for sequence in self._FORWARDED_POINTER_EVENTS:
+            overlay.bind(
+                sequence,
+                lambda event, seq=sequence, widget=overlay: self._forward_pointer_event(
+                    seq, event, widget
+                ),
+            )
+        for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            overlay.bind(
+                sequence,
+                lambda event, seq=sequence, widget=overlay: self._forward_pointer_event(
+                    seq, event, widget
+                ),
+            )
+        return overlay
+
+    def _forward_pointer_event(
+        self, sequence: str, event: tk.Event, overlay: tk.Label
+    ) -> str:
+        """Chuyển event từ label phủ về Treeview để không mất tương tác cũ."""
+        x = overlay.winfo_x() + event.x
+        y = overlay.winfo_y() + event.y
+        options: dict[str, int] = {"x": x, "y": y}
+        delta = getattr(event, "delta", 0)
+        if delta:
+            options["delta"] = delta
+        self.event_generate(sequence, **options)
+        self._schedule_overlay_redraw()
+        return "break"
+
 
 class MainWindow(tk.Tk):
     # Ứng viên font theo thứ tự ưu tiên — "Segoe UI" (Windows chuẩn) trước,
@@ -161,6 +356,8 @@ class MainWindow(tk.Tk):
         self._saving_manual_product = (
             False  # True trong lúc _save_manual_product_worker đang ghi xlsx
         )
+        self._edit_listing_window: tk.Toplevel | None = None
+        self._product_detail_window: tk.Toplevel | None = None
         self._auth_warned: set[str] = (
             set()
         )  # site đã popup lỗi đăng nhập rồi — không popup lại (chỉ log)
@@ -315,12 +512,28 @@ class MainWindow(tk.Tk):
         ttk.Label(parent, text="Đã chọn:", font=("", 10, "bold")).pack(
             anchor="w", padx=10, pady=(6, 0)
         )
+        legend_row = ttk.Frame(parent)
+        legend_row.pack(fill="x", padx=10, pady=(4, 2))
+        for kind, label in _STATUS_LEGEND:
+            colors = _STATUS_COLORS[kind]
+            tk.Label(
+                legend_row,
+                text=label,
+                background=colors["background"],
+                foreground=colors["foreground"],
+                font=(self._ui_font[0], 9, "bold"),
+                padx=7,
+                pady=3,
+                borderwidth=0,
+            ).pack(side="left", padx=(0, 5))
         tree_frame = ttk.Frame(parent)
         tree_frame.pack(fill="both", expand=True, padx=10, pady=2)
         site_order = self._site_order()
         site_ids = tuple(sid for sid, _, _ in site_order)
-        self._tree = ttk.Treeview(
+        self._tree = StatusCellTreeview(
             tree_frame,
+            status_columns=site_ids,
+            status_font=self._ui_font,
             columns=("stt", "refresh", "name", "cheapest") + site_ids,
             show="headings",
             height=10,
@@ -332,10 +545,10 @@ class MainWindow(tk.Tk):
         self._tree.column("stt", width=40, anchor="center", stretch=False)
         self._tree.column("refresh", width=36, anchor="center", stretch=False)
         self._tree.column("name", width=170, anchor="w")
-        self._tree.column("cheapest", width=130, anchor="w")
+        self._tree.column("cheapest", width=155, anchor="w")
         for sid, _source, display_name in site_order:
             self._tree.heading(sid, text=display_name)
-            self._tree.column(sid, width=90, anchor="center")
+            self._tree.column(sid, width=135, anchor="center")
         self._tree.bind("<Button-3>", self._on_tree_right_click)
         # Nhấp đúp cũng mở bảng chi tiết (giống chuột phải) — bảng chi tiết có
         # sẵn nút sửa/xóa từng site (nhấp đúp dòng site trong đó, xem
@@ -507,8 +720,9 @@ class MainWindow(tk.Tk):
         """Nạp lại danh sách 'Đã chọn' từ lần trước (output/selected_products.json)
         NGAY lúc mở app — hiện luôn bằng giá đã lưu, KHÔNG fetch live lại (tránh
         dội request vào 9 site cùng lúc nếu danh sách dài — đúng lo ngại rate-limit
-        khi restore nhiều sản phẩm cùng lúc). Muốn giá mới thì xóa dòng rồi thêm
-        lại (tự động fetch live như bình thường)."""
+        khi restore nhiều sản phẩm cùng lúc). Sau khi catalog sẵn sàng, dữ liệu
+        legacy từng lấy theo tên sẽ được nhận diện và crawl lại tuần tự đúng một
+        lần; dữ liệu đã khớp ID thì vẫn giữ nguyên, người dùng chủ động refresh."""
         try:
             selected, catalog_items = load_selected()
         except Exception as exc:
@@ -577,10 +791,24 @@ class MainWindow(tk.Tk):
             return
 
         win = tk.Toplevel(self)
-        win.title("Thêm sản phẩm mới")
-        self._center_toplevel(win, 640, 480)
         win.transient(self)
         win.grab_set()
+        self._render_product_url_form(win)
+
+    def _render_product_url_form(
+        self, win: tk.Toplevel, initial_urls: dict[str, str] | None = None
+    ) -> None:
+        """Vẽ bước nhập URL trong dialog thêm sản phẩm.
+
+        Dùng lại cùng một ``Toplevel`` cho cả hai bước. ``initial_urls`` giúp
+        nút "Quay lại" từ màn kiểm tra phục hồi nguyên các link người dùng đã
+        dán/chỉnh, thay vì tạo form trống hoặc thêm một cửa sổ mới.
+        """
+        for widget in win.winfo_children():
+            widget.destroy()
+        urls = initial_urls or {}
+        win.title("Thêm sản phẩm mới")
+        self._center_toplevel(win, 640, 480)
 
         ttk.Label(
             win,
@@ -597,6 +825,8 @@ class MainWindow(tk.Tk):
                 row=row_i, column=0, sticky="w", padx=(0, 6), pady=3
             )
             entry = ttk.Entry(body, width=60)
+            if urls.get(site_id):
+                entry.insert(0, urls[site_id])
             entry.grid(row=row_i, column=1, sticky="we", pady=3)
             entries[site_id] = entry
         body.columnconfigure(1, weight=1)
@@ -672,6 +902,7 @@ class MainWindow(tk.Tk):
             show="headings",
             height=9,
         )
+        self._configure_status_tags(tree)
         for col, text, width in (
             ("site", "Site", 130),
             ("price", "Giá", 100),
@@ -692,6 +923,7 @@ class MainWindow(tk.Tk):
                 "end",
                 iid=site_id,
                 values=(site_names.get(site_id, site_id), "—", "đang kiểm tra...", url),
+                tags=("pending",),
             )
 
         def _run_check() -> None:
@@ -762,6 +994,11 @@ class MainWindow(tk.Tk):
             kind="success",
         ).pack(side="right")
         ttk.Button(btn_row, text="Hủy", command=win.destroy).pack(side="right", padx=6)
+        ttk.Button(
+            btn_row,
+            text="Quay lại",
+            command=lambda: self._render_product_url_form(win, urls),
+        ).pack(side="left", padx=(0, 6))
         self._colored_button(
             btn_row,
             "Kiểm tra lại",
@@ -931,14 +1168,24 @@ class MainWindow(tk.Tk):
                 "Danh sách trống", "Chưa có sản phẩm nào trong 'Đã chọn'."
             )
             return
+        self._start_recrawl_names(
+            names,
+            f"Đang crawl lại giá cho {len(names)} sản phẩm "
+            "(tuần tự, tránh rate-limit)...",
+        )
+
+    def _start_recrawl_names(self, names: list[str], message: str) -> None:
+        """Khởi chạy worker tuần tự cho một tập tên đã chọn.
+
+        Dùng chung cho nút Crawl lại tất cả và bước tự sửa dữ liệu legacy sau
+        khi catalog sẵn sàng.
+        """
         self._recrawling = True
         self._recrawl_btn.configure(state="disabled")
         for name in names:
             self._pending.add(name)
             self._insert_crawling_row(name)
-        self._append_log(
-            f"Đang crawl lại giá cho {len(names)} sản phẩm (tuần tự, tránh rate-limit)..."
-        )
+        self._append_log(message)
         threading.Thread(
             target=self._recrawl_all_worker, args=(names,), daemon=True
         ).start()
@@ -995,6 +1242,20 @@ class MainWindow(tk.Tk):
             {"site_id": site_id, "name": name, "source": source}
             for site_id, source, name in self._site_order()
         ]
+
+    def _configure_status_tags(self, tree: ttk.Treeview) -> None:
+        """Gắn semantic colors cho Treeview có một trạng thái trên mỗi dòng."""
+        for kind, colors in _STATUS_COLORS.items():
+            options: dict[str, object] = dict(colors)
+            if kind in {"best", "price", "error", "out"}:
+                options["font"] = (self._ui_font[0], self._ui_font[1], "bold")
+            elif kind == "missing":
+                options["font"] = (
+                    self._ui_font[0],
+                    max(8, self._ui_font[1] - 1),
+                    "normal",
+                )
+            tree.tag_configure(kind, **options)
 
     def _rebuild_tree_row(self, name: str) -> None:
         """Xóa-và-chèn-lại dòng Treeview cho `name` từ self._selected/_catalog_items
@@ -1308,7 +1569,21 @@ class MainWindow(tk.Tk):
             records = self._selected.get(name, [])
         rows = vm.product_detail_rows(self._site_descriptors(), items, records)
 
+        # Menu "Sửa" và double-click đều mở bảng chi tiết này. Giữ đúng một
+        # instance để click liên tiếp không tạo nhiều màn edit chồng lên nhau.
+        current_detail = getattr(self, "_product_detail_window", None)
+        if current_detail is not None:
+            try:
+                if current_detail.winfo_exists():
+                    current_detail.lift()
+                    current_detail.focus_force()
+                    return
+            except (tk.TclError, AttributeError):
+                pass
+            self._product_detail_window = None
+
         win = tk.Toplevel(self)
+        self._product_detail_window = win
         win.title(f"Chi tiết: {name}")
         self._center_toplevel(win, 700, 460)
         win.transient(self)
@@ -1339,6 +1614,7 @@ class MainWindow(tk.Tk):
             show="headings",
             height=9,
         )
+        self._configure_status_tags(detail_tree)
         for col, text, width in (
             ("site", "Site", 140),
             ("price", "Giá", 110),
@@ -1370,6 +1646,7 @@ class MainWindow(tk.Tk):
                     row["updated"],
                     row["url"],
                 ),
+                tags=(vm.status_kind(row["status"]),),
             )
         detail_tree.bind(
             "<Double-Button-1>",
@@ -1627,7 +1904,22 @@ class MainWindow(tk.Tk):
             messagebox.showinfo("Đang lưu", "Đang lưu thao tác trước đó — chờ xong đã.")
             return
 
+        # Chỉ cho phép một dialog sửa tồn tại trên toàn ứng dụng. Cả menu chuột
+        # phải và double-click ở bảng chi tiết đều đi qua hàm này nên chặn tại
+        # đây sẽ bao phủ mọi đường mở dialog.
+        current_edit = getattr(self, "_edit_listing_window", None)
+        if current_edit is not None:
+            try:
+                if current_edit.winfo_exists():
+                    current_edit.lift()
+                    current_edit.focus_force()
+                    return
+            except (tk.TclError, AttributeError):
+                pass
+            self._edit_listing_window = None
+
         win = tk.Toplevel(self)
+        self._edit_listing_window = win
         win.title(f"Sửa — {site_display}")
         self._center_toplevel(win, 560, 220)
         win.resizable(False, False)
@@ -1674,6 +1966,14 @@ class MainWindow(tk.Tk):
             if not new_url:
                 messagebox.showinfo(
                     "Thiếu link", "Link không được để trống.", parent=win
+                )
+                return
+            if new_url != current_url and not detect_product_id(site_id, new_url):
+                messagebox.showerror(
+                    "Link không hợp lệ",
+                    f"Link phải là trang chi tiết sản phẩm thật của {site_display}.\n"
+                    "Ứng dụng phải tách được ID sản phẩm từ link trước khi lưu.",
+                    parent=win,
                 )
                 return
             if new_name == name and new_url == current_url:
@@ -1733,26 +2033,41 @@ class MainWindow(tk.Tk):
         worker khác trong file này (tránh nút 'Thêm sản phẩm mới' bị kẹt
         'disabled' vĩnh viễn). Đổi tên (`CrawlerEngine.rename_product`, áp dụng
         MỌI site) và đổi link (`CrawlerEngine.set_manual_listing`, CHỈ site
-        này) là 2 bước ĐỘC LẬP — đổi tên vẫn có hiệu lực dù link không tách
-        được ID (chỉ link bị bỏ, không chặn tên)."""
+        này) chỉ được thực hiện sau khi URL mới đã xác thực và tách được ID.
+        Không tách được ID thì KHÔNG ghi thay đổi nào xuống file."""
         name_changed = new_name != old_name
         url_changed = new_url != old_url
         new_item = None
+        if url_changed and not detect_product_id(site_id, new_url):
+            self._msg_queue.put(
+                (
+                    "log",
+                    f"'{old_name}': link mới không thuộc đúng trang sản phẩm — "
+                    "không lưu tên, link hoặc product_id.",
+                )
+            )
+            self._msg_queue.put(
+                (
+                    "listing_edit_done",
+                    old_name,
+                    new_name,
+                    master_id,
+                    source,
+                    None,
+                    False,
+                    False,
+                )
+            )
+            return
         try:
-            if name_changed:
-                self._engine.rename_product(master_id, new_name)
             if url_changed:
                 new_item = self._engine.set_manual_listing(
                     master_id, site_id, new_url, new_name
                 )
                 if new_item is None:
-                    self._msg_queue.put(
-                        (
-                            "log",
-                            f"'{old_name}': không tách được ID từ link mới — link KHÔNG được lưu "
-                            "(tên vẫn được lưu nếu có đổi).",
-                        )
-                    )
+                    raise ValueError("Không tách được ID sản phẩm từ link mới.")
+            if name_changed:
+                self._engine.rename_product(master_id, new_name)
         except Exception as exc:
             self._msg_queue.put(("log", f"LỖI lưu sửa '{old_name}': {exc}"))
             self._msg_queue.put(
@@ -1900,21 +2215,22 @@ class MainWindow(tk.Tk):
                                 rec is not None
                                 and rec.stock_status == StockStatus.OUT_OF_STOCK
                             ):
-                                price, status = "—", "hết hàng"
+                                price, status = "—", "Hết hàng"
                             elif rec is not None and rec.price_vnd > 0:
                                 price = rec.price_display or f"{rec.price_vnd:,}đ"
                                 status = (
-                                    "★ Tốt"
+                                    "Tốt nhất"
                                     if best is not None and rec is best
-                                    else "Tốt"
+                                    else "Có giá"
                                 )
                             elif rec is not None:
-                                price, status = "—", "giá ẩn"
+                                price, status = "—", "Giá ẩn"
                             else:
-                                price, status = "—", "lỗi giá"
+                                price, status = "—", "Lỗi giá"
                             if tree.exists(site_id):
                                 tree.set(site_id, "price", price)
                                 tree.set(site_id, "status", status)
+                                tree.item(site_id, tags=(vm.status_kind(status),))
                 elif kind == "listing_edit_done":
                     self._saving_manual_product = False
                     self._add_product_btn.configure(state="normal")
@@ -2028,6 +2344,7 @@ class MainWindow(tk.Tk):
                 elif kind == "catalog_ready":
                     self._catalog_ready = True
                     self._stop_catalog_spinner()
+                    stale_names: list[str] = []
                     for name, saved_items in self._catalog_items.items():
                         master_ids = {item.master_product_id for item in saved_items}
                         current_items = [
@@ -2036,11 +2353,24 @@ class MainWindow(tk.Tk):
                             if item.master_product_id in master_ids
                         ]
                         if current_items:
+                            reconciled, needs_refresh = vm.reconcile_records_with_items(
+                                current_items, self._selected.get(name, [])
+                            )
+                            self._selected[name] = reconciled
                             self._catalog_items[name] = current_items
                             self._rebuild_tree_row(name)
+                            if needs_refresh:
+                                stale_names.append(name)
                     if self._catalog_items:
                         self._persist_selected()
                     pending_logs.append(f"Catalog sẵn sàng: {msg[1]} sản phẩm.")
+                    if stale_names and not self._recrawling:
+                        self._start_recrawl_names(
+                            stale_names,
+                            "Đang tự cập nhật "
+                            f"{len(stale_names)} sản phẩm có dữ liệu giá cũ "
+                            "không khớp product ID...",
+                        )
                     self._refresh_suggestions()
                 elif kind == "catalog_failed":
                     self._stop_catalog_spinner()

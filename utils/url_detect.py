@@ -1,5 +1,8 @@
-"""Tách `product_id` từ 1 URL sản phẩm dán tay (tính năng 'Thêm sản phẩm mới' trong
-GUI) — CƠ HỌC, không gọi mạng, không phụ thuộc crawler.
+"""Xác thực URL sản phẩm người dùng dán và tách ``product_id`` tương ứng.
+
+Dùng chung cho cả Thêm sản phẩm mới và Sửa link. URL phải thuộc đúng domain và
+đúng path trang chi tiết của site; chuỗi ID/path do ứng dụng tự tách, người dùng
+không bao giờ phải nhập ``product_id`` riêng.
 
 Ví von: mỗi site giấu "số hồ sơ" (product_id) ở một chỗ khác nhau trong URL — có
 site để lộ hẳn ra (số hoặc slug ngay trên URL), có site dùng chính URL làm số hồ sơ
@@ -11,10 +14,14 @@ theo đúng `product_id`).
 Quy tắc từng site (đã xác minh khớp dữ liệu thật trong
 output/catalog_master.xlsx):
 - bachhoathuoc: SKU nằm ở cuối URL dạng "...--s<số>".
-- chothuoc247: số ID nằm ở path "/san-pham/<số>".
-- chothuoctot: số ID nằm ở query param "?id=<số>".
-- giathuoctot, thuoctot3mien: slug nằm ở path "/product/<slug>" / "/san-pham/<slug>".
-- thuocsi: slug là segment cuối path (ngay dưới domain).
+- chothuoc247: số ID nằm ở path "/san-pham/<số>" hoặc cuối slug sản phẩm
+  dạng "/san-pham/<slug>-<số>.html".
+- chothuoctot: số ID nằm ở query param "?id=<số>" hoặc đầu path mới
+  "/san-pham/<số>-<slug>".
+- giathuoctot: slug nằm ở path "/product/<slug>".
+- thuoctot3mien: ID nằm ở "/san-pham/<id>" hoặc cuối URL public
+  "/<slug>-p<id>.html".
+- thuocsi: slug nằm ở "/<slug>" hoặc path public mới "/product/<slug>".
 - duocphamgiasi, thuochapu: product_id = CHÍNH URL (các crawler này dùng thẳng URL
   gốc làm product_id).
 - thuocsisaigon: product_id = PATH TƯƠNG ĐỐI (không kèm domain) — khác các site trên,
@@ -25,58 +32,111 @@ output/catalog_master.xlsx):
 from __future__ import annotations
 
 import re
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import SplitResult, parse_qs, urlsplit
+
+_SITE_DOMAINS = {
+    "bachhoathuoc": "bachhoathuoc.com",
+    "chothuoc247": "chothuoc247.vn",
+    "chothuoctot": "chothuoctot.vn",
+    "duocphamgiasi": "duocphamgiasi.vn",
+    "giathuoctot": "giathuoctot.com",
+    "thuochapu": "thuochapu.com",
+    "thuocsi": "thuocsi.vn",
+    "thuocsisaigon": "thuocsisaigon.vn",
+    "thuoctot3mien": "thuoctot3mien.vn",
+}
 
 _BACHHOATHUOC_RE = re.compile(r"--s(\d+)/?$")
-_CHOTHUOC247_RE = re.compile(r"/san-pham/(\d+)")
-_GIATHUOCTOT_RE = re.compile(r"/product/([^/?#]+)")
-_THUOCTOT3MIEN_RE = re.compile(r"/san-pham/([^/?#]+)")
+_CHOTHUOC247_RE = re.compile(
+    r"^/san-pham/(?:[^/]+-)?(\d+)(?:\.html)?/?$", re.IGNORECASE
+)
+_CHOTHUOCTOT_RE = re.compile(
+    r"^/san-pham/(\d+)(?:-[^/]+)?/?$", re.IGNORECASE
+)
+_DUOCPHAMGIASI_RE = re.compile(r"^/product/[^/]+/?$", re.IGNORECASE)
+_GIATHUOCTOT_RE = re.compile(r"^/product/([^/]+)/?$", re.IGNORECASE)
+_THUOCHAPU_RE = re.compile(r"^/thuoc/[^/]+\.html/?$", re.IGNORECASE)
+_THUOCSI_RE = re.compile(r"^/(?:product/)?([^/]+)/?$", re.IGNORECASE)
+_THUOCSISAIGON_RE = re.compile(r"^/products/[^/]+/?$", re.IGNORECASE)
+_THUOCTOT3MIEN_RE = re.compile(r"^/san-pham/([^/]+)/?$", re.IGNORECASE)
+_THUOCTOT3MIEN_PUBLIC_RE = re.compile(
+    r"^/[^/]+-p(\d+)\.html/?$", re.IGNORECASE
+)
 
 # Segment "trang trí" thuần số/rỗng không dùng làm gợi ý tên sản phẩm.
 _NUMERIC_RE = re.compile(r"^\d+$")
+
+
+def _parse_site_url(site_id: str, url: str) -> SplitResult | None:
+    """Chỉ nhận URL HTTP(S) thuộc domain của đúng site đang nhập."""
+    expected_domain = _SITE_DOMAINS.get(site_id)
+    if expected_domain is None:
+        return None
+    parts = urlsplit(url)
+    hostname = (parts.hostname or "").rstrip(".").lower()
+    if parts.scheme.lower() not in ("http", "https") or not hostname:
+        return None
+    if hostname != expected_domain and not hostname.endswith(f".{expected_domain}"):
+        return None
+    return parts
 
 
 def detect_product_id(site_id: str, url: str) -> str | None:
     """Tách product_id từ URL theo đúng quy tắc site đó dùng thật (xem bảng ở
     module docstring). Không khớp được (URL sai định dạng/thiếu phần cần thiết) →
     trả None — gọi nơi dùng tự bỏ qua site này, không chặn các site khác."""
-    url = url.strip()
+    url = (url or "").strip()
     if not url:
         return None
 
+    parts = _parse_site_url(site_id, url)
+    if parts is None:
+        return None
+
     if site_id == "bachhoathuoc":
-        m = _BACHHOATHUOC_RE.search(url)
+        m = _BACHHOATHUOC_RE.search(parts.path)
         return m.group(1) if m else None
 
     if site_id == "chothuoc247":
-        m = _CHOTHUOC247_RE.search(url)
+        # URL public có cả dạng ID thuần và slug mô tả. Chỉ lấy cụm số ở CUỐI
+        # segment để không nhầm các số quy cách như ``10v`` trong tên sản phẩm.
+        m = _CHOTHUOC247_RE.match(parts.path)
         return m.group(1) if m else None
 
     if site_id == "chothuoctot":
-        qs = parse_qs(urlsplit(url).query)
-        ids = qs.get("id")
-        return ids[0] if ids and ids[0] else None
+        path_match = _CHOTHUOCTOT_RE.match(parts.path)
+        if path_match:
+            return path_match.group(1)
+        if parts.path.rstrip("/") == "/san-pham":
+            ids = parse_qs(parts.query).get("id")
+            return ids[0] if ids and ids[0].isdigit() else None
+        return None
+
+    if site_id == "duocphamgiasi":
+        return url if _DUOCPHAMGIASI_RE.match(parts.path) else None
 
     if site_id == "giathuoctot":
-        m = _GIATHUOCTOT_RE.search(url)
+        m = _GIATHUOCTOT_RE.match(parts.path)
         return m.group(1) if m else None
+
+    if site_id == "thuochapu":
+        return url if _THUOCHAPU_RE.match(parts.path) else None
 
     if site_id == "thuoctot3mien":
-        m = _THUOCTOT3MIEN_RE.search(url)
-        return m.group(1) if m else None
+        m = _THUOCTOT3MIEN_RE.match(parts.path)
+        if m:
+            return m.group(1)
+        public_match = _THUOCTOT3MIEN_PUBLIC_RE.match(parts.path)
+        return public_match.group(1) if public_match else None
 
     if site_id == "thuocsi":
-        path = urlsplit(url).path.strip("/")
-        if not path:
+        m = _THUOCSI_RE.match(parts.path)
+        if not m or parts.path.rstrip("/").casefold() == "/product":
             return None
-        return path.rsplit("/", 1)[-1]
-
-    if site_id in ("duocphamgiasi", "thuochapu"):
-        return url
+        return m.group(1)
 
     if site_id == "thuocsisaigon":
-        parts = urlsplit(url)
-        if not parts.path:
+        if not _THUOCSISAIGON_RE.match(parts.path):
             return None
         return parts.path + (f"?{parts.query}" if parts.query else "")
 
