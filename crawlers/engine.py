@@ -14,14 +14,33 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
-from utils.catalog_master import append_manual_product, append_or_update_listing, load_master_catalog
-from utils.config_loader import app_base_dir, load_filters, load_sites, load_watchlist_config
+from utils.catalog_master import (
+    append_manual_product,
+    append_or_update_listing,
+    delete_listing,
+    delete_product,
+    load_master_catalog,
+    rename_master_product,
+)
+from utils.config_loader import (
+    app_base_dir,
+    load_filters,
+    load_sites,
+    load_watchlist_config,
+)
 from utils.filters import apply_filters
-from utils.models import CatalogItem, DrugPrice, FilterConfig, SiteConfig, WatchlistItem
+from utils.models import (
+    CatalogItem,
+    DrugPrice,
+    FilterConfig,
+    SiteConfig,
+    SourceName,
+    WatchlistItem,
+)
 from utils.normalizer import strip_accents
 from utils.url_detect import detect_product_id
 
-from .base import BaseCrawler, CrawlError
+from .base import BaseCrawler
 from .b2b import CRAWLER_REGISTRY
 from .cache_manager import CacheManager
 
@@ -36,6 +55,10 @@ class LoginCheck(NamedTuple):
     name: str
     ok: bool
     error: str  # "" nếu ok
+
+
+class DuplicateProductNameError(ValueError):
+    """Tên hiển thị do người dùng đặt đã tồn tại trong catalog."""
 
 
 class CrawlerEngine:
@@ -53,11 +76,12 @@ class CrawlerEngine:
         self.log: LogFn = log or (lambda _m: None)
         self.use_cache = use_cache
         self._master_catalog: list[CatalogItem] | None = None
-        # catalog_master_entity_resolved.xlsx có ~58k dòng — openpyxl mất vài chục
+        # catalog_master.xlsx có ~58k dòng — openpyxl mất vài chục
         # giây để đọc hết. Lock để GUI warm-up (thread nền, xem main_window
         # `_warm_catalog_worker`) và lần suggest_catalog đầu tiên (UI thread, nếu
         # gõ trước khi warm-up xong) không cùng đọc file 2 lần song song.
         self._catalog_lock = threading.Lock()
+        self._manual_write_lock = threading.Lock()
 
     def available_sites(self) -> list[SiteConfig]:
         """Site có crawler + enabled, giữ đúng thứ tự registry."""
@@ -177,13 +201,21 @@ class CrawlerEngine:
             cached = self.cache.get(site_id, cache_key)
             if cached is not None:
                 age = self.cache.age_hours(site_id, cache_key) or 0
-                self.log(f"[{config.name}] Cache hit ({age:.1f}h) → {len(cached)} sản phẩm.")
-                return cached if supports_keyword else self._filter_local(cached, keyword)
+                self.log(
+                    f"[{config.name}] Cache hit ({age:.1f}h) → {len(cached)} sản phẩm."
+                )
+                return (
+                    cached if supports_keyword else self._filter_local(cached, keyword)
+                )
 
         # 2. Crawl thật.
         crawler: BaseCrawler = crawler_cls(config, log=self.log)
         async with crawler:
-            data = await crawler.crawl(keyword) if supports_keyword else await crawler.crawl_all()
+            data = (
+                await crawler.crawl(keyword)
+                if supports_keyword
+                else await crawler.crawl_all()
+            )
 
         # 3. Lưu cache.
         if self.use_cache and config.cache.enabled and data:
@@ -199,11 +231,12 @@ class CrawlerEngine:
         return [d for d in data if kw in d.drug_name.lower()]
 
     async def fetch_live_prices(self, items: list[CatalogItem]) -> list[DrugPrice]:
-        """Giá LIVE cho các catalog item user vừa chọn (GUI search-select) — không
-        bao giờ đọc từ cache giá dài hạn. Site lọc được keyword ở server: search lại
-        đúng tên sản phẩm đó (force_refresh, nhanh vì server tự thu hẹp kết quả).
-        Site không lọc được (vd bachhoathuoc): gọi thẳng `fetch_price_by_id`, bỏ qua
-        `crawl_all()`/cache hoàn toàn.
+        """Giá LIVE cho các catalog item user vừa chọn (GUI search-select).
+
+        Chỉ lấy theo ``product_id``/link chi tiết đã lưu trong catalog. Tên sản
+        phẩm là nhãn do người dùng sửa được, không phải định danh và tuyệt đối
+        không được dùng để search/fallback. Site chưa có API/trang chi tiết lấy
+        theo ID sẽ trả lỗi giá (không có kết quả) để tránh gán nhầm sản phẩm.
 
         Gom `items` theo site_id, chạy SONG SONG GIỮA CÁC SITE (mỗi site 1
         client/rate-limiter riêng, tổng thời gian ~ site chậm nhất) nhưng
@@ -223,38 +256,36 @@ class CrawlerEngine:
         for item in items:
             by_site.setdefault(self._site_id_for_source(item.source), []).append(item)
 
-        async def fetch_site(site_id: str, site_items: list[CatalogItem]) -> list[DrugPrice]:
+        async def fetch_site(
+            site_id: str, site_items: list[CatalogItem]
+        ) -> list[DrugPrice]:
             crawler_cls = CRAWLER_REGISTRY.get(site_id)
             config = self.sites.get(site_id)
             if crawler_cls is None or config is None:
                 self.log(f"[{site_id}] Không có cấu hình/crawler — bỏ qua live-fetch.")
                 return []
 
-            supports_keyword = getattr(crawler_cls, "keyword_search_supported", True)
+            direct_fetch = getattr(crawler_cls, "direct_fetch_supported", False)
+            if not direct_fetch:
+                self.log(
+                    f"[{site_id}] Site chưa hỗ trợ lấy giá trực tiếp theo ID/link; "
+                    "trả lỗi giá, không tìm theo tên."
+                )
+                return []
             crawler: BaseCrawler = crawler_cls(config, log=self.log)
             site_results: list[DrugPrice] = []
             try:
                 async with crawler:
                     for item in site_items:
-                        if supports_keyword:
-                            try:
-                                matches = await crawler.crawl(item.drug_name)
-                            except Exception as exc:
-                                self.log(f"[{site_id}] Lỗi lấy giá live '{item.drug_name}': {exc}")
-                                continue
-                            if self.use_cache and config.cache.enabled and matches:
-                                self.cache.set(site_id, item.drug_name, matches, config.cache.ttl_hours)
-                            if item.product_id:
-                                by_id = [m for m in matches if m.product_id == item.product_id]
-                                matches = by_id or matches
-                            site_results.extend(matches)
-                        else:
+                        if direct_fetch:
                             try:
                                 price = await crawler.fetch_price_by_id(item.product_id)
                             except Exception as exc:
-                                self.log(f"[{site_id}] Lỗi lấy giá live theo id '{item.product_id}': {exc}")
+                                self.log(
+                                    f"[{site_id}] Lỗi lấy giá live theo id '{item.product_id}': {exc}"
+                                )
                                 continue
-                            if price is not None:
+                            if price is not None and price.product_id == item.product_id:
                                 site_results.append(price)
                                 self.cache.record_history([price])
             except Exception as exc:
@@ -273,7 +304,7 @@ class CrawlerEngine:
         return self.cache.suggest_names(prefix, limit)
 
     def _ensure_master_catalog(self) -> list[CatalogItem]:
-        """Nạp catalog_master_entity_resolved.xlsx 1 lần duy nhất, LAZY — engine
+        """Nạp catalog_master.xlsx 1 lần duy nhất, LAZY — engine
         chỉ dùng cho fetch_live_prices() (mỗi lần user thêm sản phẩm, main_window
         tạo 1 engine riêng cho việc này) không tốn công đọc file ~58k dòng mỗi lần."""
         if self._master_catalog is None:
@@ -288,11 +319,38 @@ class CrawlerEngine:
         phải đợi ~vài chục giây đọc file ngay trên UI thread. Trả về số sản phẩm."""
         return len(self._ensure_master_catalog())
 
-    def add_manual_product(self, urls: dict[str, str], canonical_name: str) -> list[CatalogItem]:
+    @staticmethod
+    def _product_name_key(name: str) -> str:
+        """So tên người dùng theo chữ thường, bỏ dấu và gộp khoảng trắng."""
+        return " ".join(strip_accents(name).casefold().split())
+
+    def product_name_exists(
+        self, name: str, *, exclude_master_product_id: str = ""
+    ) -> bool:
+        """Kiểm tra trùng tên trên các master product, không dùng tên làm ID."""
+        key = self._product_name_key(name)
+        if not key:
+            return False
+        seen_master_ids: set[str] = set()
+        for item in self._ensure_master_catalog():
+            master_id = item.master_product_id
+            if master_id and master_id in seen_master_ids:
+                continue
+            if master_id:
+                seen_master_ids.add(master_id)
+            if master_id == exclude_master_product_id:
+                continue
+            if self._product_name_key(item.drug_name) == key:
+                return True
+        return False
+
+    def add_manual_product(
+        self, urls: dict[str, str], canonical_name: str
+    ) -> list[CatalogItem]:
         """Thêm 1 sản phẩm MỚI thủ công qua GUI (dán URL từng site — xem
         `gui.main_window._save_manual_product`): tách `product_id` CƠ HỌC từ URL
         (`utils.url_detect`, không gọi mạng), ghi vào
-        catalog_master_entity_resolved.xlsx (`utils.catalog_master.append_manual_product`
+        catalog_master.xlsx (`utils.catalog_master.append_manual_product`
         — CHẬM, PHẢI gọi trong thread nền phía GUI), rồi thêm luôn vào
         `self._master_catalog` đang có sẵn trong bộ nhớ (nếu đã warm-up) để có ngay,
         không cần đợi đọc lại cả file.
@@ -300,6 +358,10 @@ class CrawlerEngine:
         `urls`: {site_id: url} — site rỗng/không tách được product_id bị bỏ qua,
         không chặn các site khác. Trả về [] nếu KHÔNG site nào tách được (không ghi
         gì vào file trong trường hợp đó)."""
+        canonical_name = canonical_name.strip()
+        if not canonical_name:
+            raise ValueError("Tên sản phẩm không được để trống.")
+
         items: list[CatalogItem] = []
         for site_id, url in urls.items():
             url = (url or "").strip()
@@ -311,27 +373,35 @@ class CrawlerEngine:
             source = getattr(CRAWLER_REGISTRY.get(site_id), "source_name", None)
             if source is None:
                 continue
-            items.append(CatalogItem(
-                product_id=product_id,
-                drug_name=canonical_name,
-                search_name=strip_accents(canonical_name).lower(),
-                source=source,
-                source_url=url,
-            ))
+            items.append(
+                CatalogItem(
+                    product_id=product_id,
+                    drug_name=canonical_name,
+                    search_name=strip_accents(canonical_name).lower(),
+                    source=source,
+                    source_url=url,
+                )
+            )
 
         if not items:
             return []
 
-        master_id = append_manual_product(items, canonical_name)
-        for item in items:
-            item.master_product_id = master_id
+        # Giữ check + ghi trong cùng một lock để hai thao tác thêm đồng thời không
+        # thể cùng vượt qua kiểm tra tên trùng.
+        with self._manual_write_lock:
+            if self.product_name_exists(canonical_name):
+                raise DuplicateProductNameError(
+                    f"Tên sản phẩm '{canonical_name}' đã tồn tại trong catalog."
+                )
+            master_id = append_manual_product(items, canonical_name)
+            for item in items:
+                item.master_product_id = master_id
 
-        # Lock chung với _ensure_master_catalog — thêm sản phẩm mới thường chạy ở
-        # thread nền (xem gui.main_window._save_manual_product_worker) trong khi UI
-        # thread có thể đang gọi suggest_catalog() đọc cùng list này.
-        with self._catalog_lock:
-            if self._master_catalog is not None:
-                self._master_catalog.extend(items)
+            # Lock chung với _ensure_master_catalog — thêm sản phẩm mới thường chạy
+            # ở thread nền trong khi UI có thể đang đọc cùng list này.
+            with self._catalog_lock:
+                if self._master_catalog is not None:
+                    self._master_catalog.extend(items)
 
         return items
 
@@ -364,12 +434,68 @@ class CrawlerEngine:
         with self._catalog_lock:
             if self._master_catalog is not None:
                 self._master_catalog = [
-                    it for it in self._master_catalog
-                    if not (it.master_product_id == master_product_id and it.source == source)
+                    it
+                    for it in self._master_catalog
+                    if not (
+                        it.master_product_id == master_product_id
+                        and it.source == source
+                    )
                 ]
                 self._master_catalog.append(item)
 
         return item
+
+    def rename_product(self, master_product_id: str, new_name: str) -> None:
+        """Đổi tên chuẩn (dùng chung mọi site) của 1 sản phẩm đã có trong catalog
+        — xem `gui.main_window._open_edit_listing_dialog`. Cập nhật cả file
+        (`utils.catalog_master.rename_master_product`) và `self._master_catalog`
+        trong bộ nhớ (mọi `CatalogItem` cùng `master_product_id`, không chỉ 1 site)."""
+        rename_master_product(master_product_id, new_name)
+        with self._catalog_lock:
+            if self._master_catalog is not None:
+                for it in self._master_catalog:
+                    if it.master_product_id == master_product_id:
+                        it.drug_name = new_name
+                        it.search_name = strip_accents(new_name).lower()
+
+    def remove_listing(self, master_product_id: str, source: SourceName) -> int | None:
+        """Xóa 1 listing (1 site) khỏi catalog — xem nút "Xóa" trong
+        `gui.main_window._open_edit_listing_dialog`. Trả về số listing CÒN LẠI
+        của sản phẩm sau khi xóa (0 = đã xóa hẳn cả sản phẩm khỏi catalog, theo
+        yêu cầu không giữ tên rỗng), hoặc `None` nếu không tìm thấy (không có
+        gì bị xóa). Khác `remove_product` (xóa MỌI site cùng lúc)."""
+        remaining = delete_listing(master_product_id, source)
+        if remaining is None:
+            return None
+        with self._catalog_lock:
+            if self._master_catalog is not None:
+                self._master_catalog = [
+                    it
+                    for it in self._master_catalog
+                    if not (
+                        it.master_product_id == master_product_id
+                        and it.source == source
+                    )
+                ]
+        return remaining
+
+    def remove_product(self, master_product_id: str) -> int | None:
+        """Xóa TOÀN BỘ 1 sản phẩm (mọi listing MỌI site) khỏi catalog — xem
+        chuột phải → "Xóa" ở bảng tìm thuốc
+        (`gui.main_window._confirm_delete_product`). Khác `remove_listing`
+        (chỉ xóa 1 site, có thể còn site khác). Trả về số listing đã xóa, hoặc
+        `None` nếu không tìm thấy `master_product_id` (không có gì bị xóa)."""
+        removed = delete_product(master_product_id)
+        if removed is None:
+            return None
+        with self._catalog_lock:
+            if self._master_catalog is not None:
+                self._master_catalog = [
+                    it
+                    for it in self._master_catalog
+                    if it.master_product_id != master_product_id
+                ]
+        return removed
 
     def suggest_catalog(self, prefix: str, limit: int = 30) -> list[CatalogItem]:
         """Trả tối đa `limit` nhóm khớp, gồm đủ mọi listing/site của từng nhóm."""
@@ -419,7 +545,9 @@ class CrawlerEngine:
             if config is None or crawler_cls is None:
                 self.log(f"[{site_id}] Không có config/crawler — bỏ qua watchlist.")
                 continue
-            search_terms = list({item.search_name for item in items if item.search_name})
+            search_terms = list(
+                {item.search_name for item in items if item.search_name}
+            )
             crawler: BaseCrawler = crawler_cls(config, log=self.log)
             try:
                 async with crawler:
@@ -455,7 +583,8 @@ class CrawlerEngine:
             product_id=catalog_item.product_id,
             source=catalog_item.source,
             drug_name=catalog_item.drug_name,
-            search_name=catalog_item.search_name or strip_accents(catalog_item.drug_name).lower(),
+            search_name=catalog_item.search_name
+            or strip_accents(catalog_item.drug_name).lower(),
             image_url=catalog_item.image_url,
             added_at=time.time(),
         )
@@ -477,7 +606,10 @@ class CrawlerEngine:
     def _site_id_for_source(source) -> str:
         for sid in CRAWLER_REGISTRY:
             crawler_cls = CRAWLER_REGISTRY[sid]
-            if hasattr(crawler_cls, "source_name") and crawler_cls.source_name == source:
+            if (
+                hasattr(crawler_cls, "source_name")
+                and crawler_cls.source_name == source
+            ):
                 return sid
         return source.value.lower() if hasattr(source, "value") else str(source).lower()
 

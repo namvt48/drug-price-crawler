@@ -37,7 +37,7 @@ class AuthError(CrawlError):
 # Marker cố định trong message log khi `_login()` thất bại — GUI
 # (gui/main_window.py `_drain_queue`) tìm chuỗi này để hiện popup cảnh báo,
 # thay vì chỉ nằm im trong tab Log (dễ bị bỏ sót vì không phải tab đang xem).
-AUTH_FAILURE_MARKER = "⚠ ĐĂNG NHẬP THẤT BẠI"
+AUTH_FAILURE_MARKER = "[!] ĐĂNG NHẬP THẤT BẠI"
 
 
 # Cache phiên đăng nhập DÙNG CHUNG giữa các BaseCrawler instance khác nhau
@@ -75,6 +75,9 @@ class BaseCrawler(ABC):
     #: trả nguyên catalog dù truyền keyword gì) — CrawlerEngine sẽ cache toàn bộ catalog
     #: (keyword rỗng) rồi tự lọc theo keyword thật, thay vì gọi lại API mỗi lần search.
     keyword_search_supported: bool = True
+    #: True khi site có endpoint chi tiết ổn định theo product_id/slug/SKU.
+    #: Luồng GUI phải ưu tiên endpoint này thay vì tìm lại bằng tên hiển thị.
+    direct_fetch_supported: bool = False
 
     def __init__(self, config: SiteConfig, log: LogFn | None = None):
         self.config = config

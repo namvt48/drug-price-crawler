@@ -19,6 +19,7 @@ from typing import Any
 
 from utils.models import DrugPrice, SourceName
 from utils.price_parser import format_price, parse_price
+from utils.stock_status import detect_stock_status
 
 from ..base import AuthError, BaseCrawler
 
@@ -55,6 +56,7 @@ def _first_str(raw: dict, keys: tuple[str, ...], default: str = "") -> str:
 
 class ThuocTot3MienCrawler(BaseCrawler):
     source_name = SourceName.THUOCTOT3MIEN
+    direct_fetch_supported = True
 
     def _headers(self) -> dict[str, str]:
         return {
@@ -152,7 +154,26 @@ class ThuocTot3MienCrawler(BaseCrawler):
             dosage_form=_first_str(raw, ("packaging", "unit")),
             price_vnd=price,
             price_display=format_price(price),
+            stock_status=detect_stock_status(raw),
             source=self.source_name,
             source_url=f"{self.config.base_url}/san-pham/{slug}" if slug else self.config.base_url,
             product_id=str(slug) if slug else "",
         )
+
+    async def fetch_price_by_id(self, product_id: str) -> DrugPrice | None:
+        """Lấy đúng một sản phẩm qua endpoint `/products/{id}`."""
+        if not product_id:
+            return None
+        await self.ensure_auth()
+        resp = await self.request_with_retry(
+            "GET",
+            f"{API}/products/{product_id}",
+            headers=self._headers(),
+        )
+        if resp.status_code != 200:
+            return None
+        body = resp.json() or {}
+        raw = body.get("data") if isinstance(body, dict) else None
+        if not isinstance(raw, dict):
+            return None
+        return self._parse_product(raw)

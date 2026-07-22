@@ -17,6 +17,7 @@ from typing import Any
 
 from utils.models import DrugPrice, SourceName
 from utils.price_parser import format_price, parse_price
+from utils.stock_status import detect_stock_status
 
 from ..base import AuthError, BaseCrawler
 
@@ -38,6 +39,7 @@ def _walk(body: Any) -> list[dict]:
 
 class ChoThuocTotCrawler(BaseCrawler):
     source_name = SourceName.CHOTHUOCTOT
+    direct_fetch_supported = True
 
     async def _login(self) -> None:
         resp = await self.request_with_retry(
@@ -104,7 +106,29 @@ class ChoThuocTotCrawler(BaseCrawler):
             dosage_form=raw.get("package_desc") or raw.get("unit") or raw.get("packing") or "",
             price_vnd=price,
             price_display=format_price(price),
+            stock_status=detect_stock_status(raw),
             source=self.source_name,
             source_url=f"{self.config.base_url}/san-pham?id={pid}" if pid else self.config.base_url,
             product_id=str(pid),
         )
+
+    async def fetch_price_by_id(self, product_id: str) -> DrugPrice | None:
+        """Lấy đúng thuốc theo ``drug_id`` qua endpoint chi tiết Medlink."""
+        if not product_id:
+            return None
+        await self.ensure_auth()
+        resp = await self.request_with_retry(
+            "GET",
+            f"{API}/pharmacy/supply/product/{product_id}",
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {self._token}",
+            },
+        )
+        if resp.status_code != 200:
+            return None
+        body = resp.json() or {}
+        raw = body.get("data") if isinstance(body.get("data"), dict) else body
+        if not isinstance(raw, dict):
+            return None
+        return self._parse_product(raw)

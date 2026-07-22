@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 
 from utils.models import DrugPrice, SourceName
 from utils.price_parser import format_price, parse_price
+from utils.stock_status import detect_stock_status
 
 from ..base import AuthError, BaseCrawler
 
@@ -63,6 +64,7 @@ _OEM_PRICE_BUCKETS = [
 
 class BachHoaThuocCrawler(BaseCrawler):
     source_name = SourceName.BACHHOATHUOC
+    direct_fetch_supported = True
     # Server bỏ qua "keyword" (chỉ hỗ trợ `slug` category) — CrawlerEngine sẽ cache
     # toàn catalog 1 lần (TTL dài) rồi lọc theo keyword thật, thay vì quét lại 261
     # trang mỗi lần search.
@@ -316,6 +318,7 @@ class BachHoaThuocCrawler(BaseCrawler):
             dosage_form=raw.get("uomName") or "",
             price_vnd=price,
             price_display=format_price(price),
+            stock_status=detect_stock_status(raw),
             source=self.source_name,
             source_url=f"{self.config.base_url}/{canonical}" if canonical else self.config.base_url,
             product_id=str(raw.get("sku") or ""),

@@ -20,6 +20,7 @@ from selectolax.parser import HTMLParser
 
 from utils.models import DrugPrice, SourceName
 from utils.price_parser import format_price, parse_price
+from utils.stock_status import detect_stock_status
 
 from ..base import AuthError, BaseCrawler
 
@@ -37,6 +38,7 @@ def _input_value(tree: HTMLParser, name: str) -> str:
 
 class DuocPhamGiaSiCrawler(BaseCrawler):
     source_name = SourceName.DUOCPHAMGIASI
+    direct_fetch_supported = True
 
     async def _login(self) -> None:
         page = await self.request_with_retry("GET", f"{BASE}/tai-khoan", allow_reauth=False)
@@ -112,10 +114,17 @@ class DuocPhamGiaSiCrawler(BaseCrawler):
                 continue
             price_holder = card.css_first(".product-card")
             price = (price_holder.attributes.get("data-price", "0") if price_holder else "0") or "0"
+            out_node = card.css_first(".out-of-stock")
+            stock_node = out_node or card.css_first(".stock")
             items.append({
                 "name": name,
                 "url": (link.attributes.get("href", "") if link else "") or "",
                 "price": price,
+                "stock_status": (
+                    "out_of_stock"
+                    if out_node is not None
+                    else stock_node.text(strip=True) if stock_node else ""
+                ),
             })
         return items
 
@@ -125,7 +134,51 @@ class DuocPhamGiaSiCrawler(BaseCrawler):
             drug_name=raw.get("name", ""),
             price_vnd=price,
             price_display=format_price(price),
+            stock_status=detect_stock_status(raw),
             source=self.source_name,
             source_url=raw.get("url", "") or BASE,
             product_id=raw.get("url", ""),
+        )
+
+    async def fetch_price_by_id(self, product_id: str) -> DrugPrice | None:
+        """Lấy đúng trang chi tiết; site này dùng full URL làm product_id."""
+        if not product_id:
+            return None
+        url = (
+            product_id
+            if product_id.startswith(("http://", "https://"))
+            else f"{BASE}/{product_id.lstrip('/')}"
+        )
+        await self.ensure_auth()
+        resp = await self.request_with_retry("GET", url)
+        if resp.status_code != 200:
+            return None
+        tree = HTMLParser(resp.text)
+        name_node = (
+            tree.css_first("h1.product_title")
+            or tree.css_first("h1.entry-title")
+            or tree.css_first("h1")
+        )
+        price_node = (
+            tree.css_first(".price ins")
+            or tree.css_first(".summary .price")
+            or tree.css_first(".price")
+        )
+        out_node = tree.css_first(".out-of-stock")
+        stock_node = out_node or tree.css_first(".stock") or tree.css_first(".availability")
+        name = name_node.text(strip=True) if name_node else ""
+        if not name:
+            return None
+        price = parse_price(price_node.text(strip=True) if price_node else "")
+        stock_text = (
+            "out_of_stock" if out_node is not None else stock_node.text(strip=True) if stock_node else ""
+        )
+        return DrugPrice(
+            drug_name=name,
+            price_vnd=price,
+            price_display=format_price(price),
+            stock_status=detect_stock_status(text=stock_text),
+            source=self.source_name,
+            source_url=url,
+            product_id=product_id,
         )

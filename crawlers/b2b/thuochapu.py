@@ -17,6 +17,7 @@ from selectolax.parser import HTMLParser
 
 from utils.models import DrugPrice, SourceName
 from utils.price_parser import format_price, parse_price
+from utils.stock_status import detect_stock_status
 
 from ..base import AuthError, BaseCrawler
 
@@ -27,6 +28,7 @@ _PRICE_TEXT = re.compile(r"^[\d.]{3,}$")
 
 class ThuocHaPuCrawler(BaseCrawler):
     source_name = SourceName.THUOCHAPU
+    direct_fetch_supported = True
     # search.html BỎ QUA `filter_search` — luôn trả nguyên trang đầu catalog dù
     # tìm gì (xác nhận sống 2026-07-20). Vì vậy KHÔNG dùng keyword search để tra
     # giá theo tên: luồng CLI crawl toàn catalog rồi lọc tại chỗ; luồng GUI (chọn
@@ -133,7 +135,21 @@ class ThuocHaPuCrawler(BaseCrawler):
             )
             img = card.css_first("img")
             img_src = (img.attributes.get("src", "") or "") if img else ""
-            items.append({"name": name, "url": href, "image": img_src, "price": price})
+            out_node = card.css_first(".out-of-stock")
+            stock_node = out_node or card.css_first(".stock")
+            items.append(
+                {
+                    "name": name,
+                    "url": href,
+                    "image": img_src,
+                    "price": price,
+                    "stock_status": (
+                        "out_of_stock"
+                        if out_node is not None
+                        else stock_node.text(strip=True) if stock_node else ""
+                    ),
+                }
+            )
         return items
 
     def _parse_product(self, raw: dict) -> DrugPrice | None:
@@ -145,6 +161,7 @@ class ThuocHaPuCrawler(BaseCrawler):
             drug_name=raw.get("name", ""),
             price_vnd=price,
             price_display=format_price(price),
+            stock_status=detect_stock_status(raw),
             source=self.source_name,
             source_url=url or BASE,
             product_id=url,
@@ -188,6 +205,9 @@ class ThuocHaPuCrawler(BaseCrawler):
                     drug_name=entry.get("name", "") or "",
                     price_vnd=price,
                     price_display=format_price(price),
+                    stock_status=detect_stock_status(
+                        offers if isinstance(offers, dict) else None
+                    ),
                     source=self.source_name,
                     source_url=url,
                     product_id=url,

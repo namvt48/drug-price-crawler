@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
-from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
@@ -51,6 +49,37 @@ def _attach(crawler, handler) -> None:
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+def test_all_nine_parsers_preserve_explicit_out_of_stock_signal() -> None:
+    """Mọi adapter phải truyền tín hiệu tồn kho vào model chung."""
+    from crawlers.b2b.bachhoathuoc import BachHoaThuocCrawler
+    from crawlers.b2b.chothuoc247 import ChoThuoc247Crawler
+    from crawlers.b2b.chothuoctot import ChoThuocTotCrawler
+    from crawlers.b2b.duocphamgiasi import DuocPhamGiaSiCrawler
+    from crawlers.b2b.giathuoctot import GiathuoctotCrawler
+    from crawlers.b2b.thuochapu import ThuocHaPuCrawler
+    from crawlers.b2b.thuocsi import ThuocSiCrawler
+    from crawlers.b2b.thuocsisaigon import ThuocSiSaiGonCrawler
+    from crawlers.b2b.thuoctot3mien import ThuocTot3MienCrawler
+    from utils.models import StockStatus
+
+    cases = [
+        (BachHoaThuocCrawler, {"name": "X", "sku": "1", "status": "out_of_stock"}),
+        (ChoThuoc247Crawler, {"name": "X", "id": "1", "status": "out_of_stock"}),
+        (ChoThuocTotCrawler, {"name": "X", "id": "1", "status": "out_of_stock"}),
+        (DuocPhamGiaSiCrawler, {"name": "X", "url": "/x", "status": "out_of_stock"}),
+        (GiathuoctotCrawler, {"name": "X", "slug": "x", "status": "out_of_stock"}),
+        (ThuocHaPuCrawler, {"name": "X", "url": "/x", "status": "out_of_stock"}),
+        (ThuocSiCrawler, {"productName": "X", "slug": "x", "status": "out_of_stock"}),
+        (ThuocSiSaiGonCrawler, {"name": "X", "url": "/x", "status": "out_of_stock"}),
+        (ThuocTot3MienCrawler, {"name": "X", "id": "1", "status": "out_of_stock"}),
+    ]
+
+    for crawler_cls, raw in cases:
+        result = crawler_cls(_cfg())._parse_product(raw)
+        assert result is not None
+        assert result.stock_status == StockStatus.OUT_OF_STOCK
 
 
 # =====================================================================
@@ -146,6 +175,36 @@ class TestGiathuoctot:
         assert dp is not None
         assert dp.price_vnd == 5000
 
+    def test_fetch_price_by_id_uses_slug_detail_and_member_price(self) -> None:
+        from crawlers.b2b.giathuoctot import GiathuoctotCrawler
+
+        c = GiathuoctotCrawler(_cfg("giathuoctot", "https://www.giathuoctot.com"))
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            if "login" in req.url.path:
+                return httpx.Response(200, json={"data": {"jwtToken": "T"}})
+            if "/product/product/slug/" in req.url.path:
+                return httpx.Response(
+                    200,
+                    json={
+                        "name": "Alaxan hộp 10 vỉ x 10 viên nén United",
+                        "slug": "alaxan-10x10",
+                        "basePrice": 116000,
+                        "pricingTablePrice": 111000,
+                    },
+                )
+            return httpx.Response(404)
+
+        _run(c.open())
+        _attach(c, handler)
+        result = _run(c.fetch_price_by_id("alaxan-10x10"))
+
+        assert c.direct_fetch_supported is True
+        assert result is not None
+        assert result.product_id == "alaxan-10x10"
+        assert result.price_vnd == 111000
+        _run(c.close())
+
 
 # =====================================================================
 # ChoThuoc247
@@ -221,6 +280,71 @@ class TestChoThuoc247:
         _attach(c, handler)
         with pytest.raises(AuthError):
             _run(c._login())
+        _run(c.close())
+
+    def test_fetch_price_by_id_reads_exact_detail_page(self) -> None:
+        from crawlers.b2b.chothuoc247 import ChoThuoc247Crawler
+
+        c = ChoThuoc247Crawler(_cfg("chothuoc247", "https://chothuoc247.vn"))
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            if req.url.path == "/dang-nhap.html":
+                return httpx.Response(
+                    200, text='<meta name="csrf-token" content="C">'
+                )
+            if req.url.path == "/submitLoginCustomer":
+                return httpx.Response(302, headers={"location": "/dat-hang.html"})
+            if req.url.path == "/dat-hang.html":
+                return httpx.Response(
+                    200, text='<meta name="csrf-token" content="C2">'
+                )
+            if req.url.path == "/san-pham/5027.html":
+                return httpx.Response(
+                    200,
+                    text='<h1 class="product-title">Alaxan hộp 100 viên</h1>'
+                    '<span class="price">Giá: 113,500 ₫</span>',
+                )
+            return httpx.Response(404)
+
+        _run(c.open())
+        _attach(c, handler)
+        result = _run(c.fetch_price_by_id("5027"))
+
+        assert c.direct_fetch_supported is True
+        assert result is not None
+        assert result.product_id == "5027"
+        assert result.price_vnd == 113500
+        assert result.source_url.endswith("/san-pham/5027.html")
+        _run(c.close())
+
+    def test_fetch_price_by_id_returns_out_of_stock_record_without_price(self) -> None:
+        from crawlers.b2b.chothuoc247 import ChoThuoc247Crawler
+        from utils.models import StockStatus
+
+        c = ChoThuoc247Crawler(_cfg("chothuoc247", "https://chothuoc247.vn"))
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            if req.url.path == "/dang-nhap.html":
+                return httpx.Response(200, text='<meta name="csrf-token" content="C">')
+            if req.url.path == "/submitLoginCustomer":
+                return httpx.Response(302, headers={"location": "/dat-hang.html"})
+            if req.url.path == "/dat-hang.html":
+                return httpx.Response(200, text='<meta name="csrf-token" content="C2">')
+            if req.url.path == "/san-pham/99.html":
+                return httpx.Response(
+                    200,
+                    text='<h1 class="product-title">Thuốc X</h1>'
+                    '<p class="stock out-of-stock">Hết hàng</p>',
+                )
+            return httpx.Response(404)
+
+        _run(c.open())
+        _attach(c, handler)
+        result = _run(c.fetch_price_by_id("99"))
+
+        assert result is not None
+        assert result.price_vnd == 0
+        assert result.stock_status == StockStatus.OUT_OF_STOCK
         _run(c.close())
 
 
@@ -390,6 +514,25 @@ class TestThuocHaPu:
         assert dp.product_id == "https://thuochapu.com/thuoc/alaxan-united.html"
         _run(c.close())
 
+    def test_detail_jsonld_preserves_out_of_stock_availability(self) -> None:
+        from crawlers.b2b.thuochapu import ThuocHaPuCrawler
+        from utils.models import StockStatus
+
+        c = ThuocHaPuCrawler(_cfg("thuochapu"))
+        html = (
+            '<script type="application/ld+json">'
+            '{"@type":"Product","name":"Thuốc X",'
+            '"offers":{"@type":"Offer","price":"0",'
+            '"availability":"https://schema.org/OutOfStock"}}'
+            "</script>"
+        )
+
+        result = c._parse_detail(html, "https://thuochapu.com/thuoc/x.html")
+
+        assert result is not None
+        assert result.price_vnd == 0
+        assert result.stock_status == StockStatus.OUT_OF_STOCK
+
 
 # =====================================================================
 # ChoThuocTot
@@ -498,6 +641,35 @@ class TestChoThuocTot:
         assert _walk({"data": {"content": [{"y": 2}]}}) == [{"y": 2}]
         assert _walk({"products": [{"z": 3}]}) == [{"z": 3}]
         assert _walk({}) == []
+
+    def test_fetch_price_by_id_uses_medlink_detail_endpoint(self) -> None:
+        from crawlers.b2b.chothuoctot import ChoThuocTotCrawler
+
+        c = ChoThuocTotCrawler(_cfg("chothuoctot", "https://chothuoctot.vn"))
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            if req.url.path == "/oauth/token":
+                return httpx.Response(200, json={"access_token": "T"})
+            if req.url.path == "/pharmacy/supply/product/1623682":
+                return httpx.Response(
+                    200,
+                    json={
+                        "drug_id": 1623682,
+                        "drg_drug_name": "Alaxan hộp 100 viên",
+                        "units": [{"wholesale_price": 112000}],
+                    },
+                )
+            return httpx.Response(404)
+
+        _run(c.open())
+        _attach(c, handler)
+        result = _run(c.fetch_price_by_id("1623682"))
+
+        assert c.direct_fetch_supported is True
+        assert result is not None
+        assert result.product_id == "1623682"
+        assert result.price_vnd == 112000
+        _run(c.close())
 
 
 # =====================================================================
@@ -720,6 +892,55 @@ class TestThuocTot3Mien:
         assert dp is not None
         assert dp.price_vnd == 90000
 
+    def test_out_of_stock_status_is_preserved_even_when_price_is_zero(self) -> None:
+        from crawlers.b2b.thuoctot3mien import ThuocTot3MienCrawler
+
+        c = ThuocTot3MienCrawler(_cfg("thuoctot3mien"))
+        dp = c._parse_product(
+            {
+                "id": 4079,
+                "name": "Colchicin (1vỉ x 20viên/h) Danaphar",
+                "status": "out_of_stock",
+                "quantity": 0,
+                "price": {"base": 0, "final": 0},
+            }
+        )
+
+        assert dp is not None
+        assert dp.price_vnd == 0
+        assert dp.stock_status == "out_of_stock"
+
+    def test_fetch_price_by_id_uses_product_detail(self) -> None:
+        from crawlers.b2b.thuoctot3mien import ThuocTot3MienCrawler
+
+        c = ThuocTot3MienCrawler(_cfg("thuoctot3mien", "https://thuoctot3mien.vn"))
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            if "/customer/login" in req.url.path:
+                return httpx.Response(200, json={"data": {"token": "T"}})
+            if req.url.path.endswith("/products/646"):
+                return httpx.Response(
+                    200,
+                    json={
+                        "data": {
+                            "id": 646,
+                            "name": "Biotin 5mg (Hộp 2 vỉ x 10 viên)",
+                            "price": {"base": 10700, "final": 10700},
+                        }
+                    },
+                )
+            return httpx.Response(404)
+
+        _run(c.open())
+        _attach(c, handler)
+        result = _run(c.fetch_price_by_id("646"))
+
+        assert c.direct_fetch_supported is True
+        assert result is not None
+        assert result.product_id == "646"
+        assert result.price_vnd == 10700
+        _run(c.close())
+
     def test_empty_keyword_omits_search_param(self) -> None:
         """Gửi `search=""` (rỗng) khiến server trả 0 sản phẩm thay vì "không lọc"
         — xác nhận sống 2026-07-11. crawl_all()/catalog phải KHÔNG gửi field
@@ -857,6 +1078,37 @@ class TestThuocSiSaiGon:
         assert dp.drug_name == "Aspirin"
         assert dp.price_vnd == 25000
         assert "thuocsisaigon.vn/products/aspirin" in dp.source_url
+        _run(c.close())
+
+    def test_fetch_price_by_id_preserves_out_of_stock_status(self) -> None:
+        from crawlers.b2b.thuocsisaigon import ThuocSiSaiGonCrawler
+        from utils.models import StockStatus
+
+        c = ThuocSiSaiGonCrawler(_cfg("thuocsisaigon", "https://thuocsisaigon.vn"))
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            if req.url.path == "/account/login" and req.method == "GET":
+                return httpx.Response(
+                    200,
+                    text='<input name="__RequestVerificationToken" value="RV">',
+                )
+            if req.url.path == "/account/login" and req.method == "POST":
+                return httpx.Response(302, headers={"location": "/"})
+            if req.url.path == "/products/thuoc-x":
+                return httpx.Response(
+                    200,
+                    text='<h1>Thuốc X</h1><div class="sold-out">Hết hàng</div>',
+                )
+            return httpx.Response(404)
+
+        _run(c.open())
+        _attach(c, handler)
+        result = _run(c.fetch_price_by_id("/products/thuoc-x"))
+
+        assert c.direct_fetch_supported is True
+        assert result is not None
+        assert result.price_vnd == 0
+        assert result.stock_status == StockStatus.OUT_OF_STOCK
         _run(c.close())
 
     def test_empty_keyword_uses_collections_all_not_search(self) -> None:
@@ -1021,6 +1273,72 @@ class TestDuocPhamGiaSi:
         _run(c.open())
         _attach(c, handler)
         _run(c._login())
+        _run(c.close())
+
+    def test_fetch_price_by_id_uses_exact_product_url(self) -> None:
+        from crawlers.b2b.duocphamgiasi import DuocPhamGiaSiCrawler
+
+        c = DuocPhamGiaSiCrawler(_cfg("duocphamgiasi", "https://duocphamgiasi.vn"))
+        product_url = "https://duocphamgiasi.vn/product/alaxan/"
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            if req.url.path == "/tai-khoan" and req.method == "GET":
+                return httpx.Response(
+                    200,
+                    text='<input name="mbup_key" value="K">'
+                    '<input name="nonce_rwmb-user-login" value="N">',
+                )
+            if req.url.path == "/tai-khoan" and req.method == "POST":
+                return httpx.Response(302, headers={"location": "/"})
+            if req.url.path == "/product/alaxan/":
+                return httpx.Response(
+                    200,
+                    text='<h1 class="product_title">Alaxan hộp 100 viên</h1>'
+                    '<p class="price"><span>114,999₫</span></p>',
+                )
+            return httpx.Response(404)
+
+        _run(c.open())
+        _attach(c, handler)
+        result = _run(c.fetch_price_by_id(product_url))
+
+        assert c.direct_fetch_supported is True
+        assert result is not None
+        assert result.product_id == product_url
+        assert result.price_vnd == 114999
+        _run(c.close())
+
+    def test_fetch_price_by_id_returns_out_of_stock_record_without_price(self) -> None:
+        from crawlers.b2b.duocphamgiasi import DuocPhamGiaSiCrawler
+        from utils.models import StockStatus
+
+        c = DuocPhamGiaSiCrawler(_cfg("duocphamgiasi", "https://duocphamgiasi.vn"))
+        product_url = "https://duocphamgiasi.vn/product/thuoc-x/"
+
+        def handler(req: httpx.Request) -> httpx.Response:
+            if req.url.path == "/tai-khoan" and req.method == "GET":
+                return httpx.Response(
+                    200,
+                    text='<input name="mbup_key" value="K">'
+                    '<input name="nonce_rwmb-user-login" value="N">',
+                )
+            if req.url.path == "/tai-khoan" and req.method == "POST":
+                return httpx.Response(302, headers={"location": "/"})
+            if req.url.path == "/product/thuoc-x/":
+                return httpx.Response(
+                    200,
+                    text='<h1 class="product_title">Thuốc X</h1>'
+                    '<p class="stock out-of-stock">Hết hàng</p>',
+                )
+            return httpx.Response(404)
+
+        _run(c.open())
+        _attach(c, handler)
+        result = _run(c.fetch_price_by_id(product_url))
+
+        assert result is not None
+        assert result.price_vnd == 0
+        assert result.stock_status == StockStatus.OUT_OF_STOCK
         _run(c.close())
 
     def test_crawl_all_uses_product_url_not_shop(self) -> None:

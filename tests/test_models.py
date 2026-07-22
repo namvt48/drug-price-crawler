@@ -14,6 +14,7 @@ from utils.models import (
     RateLimitConfig,
     SiteConfig,
     SourceName,
+    StockStatus,
     WatchlistConfig,
     WatchlistItem,
 )
@@ -47,6 +48,7 @@ class TestDrugPrice:
         assert dp.brand == ""
         assert dp.price_vnd == 0
         assert dp.price_display == ""
+        assert dp.stock_status == StockStatus.UNKNOWN
         assert isinstance(dp.crawled_at, datetime)
 
     def test_none_fields_coerced_to_empty(self) -> None:
@@ -100,13 +102,14 @@ class TestCSVHeaders:
             "strength",
             "price_vnd",
             "price_display",
+            "stock_status",
             "source",
             "source_url",
             "crawled_at",
         ]
 
     def test_length(self) -> None:
-        assert len(CSV_HEADERS) == 11
+        assert len(CSV_HEADERS) == 12
 
     def test_canonical_after_drug_name(self) -> None:
         assert CSV_HEADERS.index("canonical_name") == CSV_HEADERS.index("drug_name") + 1

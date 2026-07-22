@@ -41,7 +41,7 @@ license.key
 
 # --- Excel output ---
 *.xlsx
-!output/catalog_master_entity_resolved.xlsx
+!output/catalog_master.xlsx
 
 # --- Test/coverage artifacts ---
 .coverage
@@ -50,3 +50,7 @@ htmlcov/
 
 # --- Agent/tool scratch (drafts, plans) ---
 .omo/
+
+# --- Local backups / business data (không commit — nặng + nhạy cảm) ---
+backup/
+*.xls

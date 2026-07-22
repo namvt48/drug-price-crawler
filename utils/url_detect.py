@@ -9,7 +9,7 @@ khớp được với kết quả tìm kiếm thật sau này (`CrawlerEngine.fe
 theo đúng `product_id`).
 
 Quy tắc từng site (đã xác minh khớp dữ liệu thật trong
-output/catalog_master_entity_resolved.xlsx):
+output/catalog_master.xlsx):
 - bachhoathuoc: SKU nằm ở cuối URL dạng "...--s<số>".
 - chothuoc247: số ID nằm ở path "/san-pham/<số>".
 - chothuoctot: số ID nằm ở query param "?id=<số>".

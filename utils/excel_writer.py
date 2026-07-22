@@ -21,6 +21,7 @@ _CHEAPEST_FONT = Font(color="006100", bold=True)
 _COL_WIDTHS = {
     "drug_name": 38, "canonical_name": 30, "brand": 16, "manufacturer": 22,
     "dosage_form": 14, "strength": 12, "price_vnd": 12, "price_display": 14,
+    "stock_status": 16,
     "source": 16, "source_url": 40, "crawled_at": 20,
 }
 

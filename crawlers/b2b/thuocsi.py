@@ -26,6 +26,7 @@ from Crypto.Cipher import AES
 
 from utils.models import DrugPrice, SourceName
 from utils.price_parser import format_price, parse_price
+from utils.stock_status import detect_stock_status
 
 from ..base import AuthError, BaseCrawler
 
@@ -178,6 +179,7 @@ class ThuocSiCrawler(BaseCrawler):
             dosage_form=raw.get("volume") or raw.get("unit") or "",
             price_vnd=price,
             price_display=format_price(price),
+            stock_status=detect_stock_status(raw),
             source=self.source_name,
             source_url=f"{self.config.base_url}/{slug}" if slug else self.config.base_url,
             product_id=str(slug),

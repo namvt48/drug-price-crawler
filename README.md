@@ -75,7 +75,7 @@ dist/
 │   ├── accounts.yaml
 │   └── name_aliases.yaml
 └── output/
-    └── catalog_master_entity_resolved.xlsx
+    └── catalog_master.xlsx
 ```
 
 `accounts.yaml` và catalog đặt **cạnh** file `.exe`, không nhúng vào binary để

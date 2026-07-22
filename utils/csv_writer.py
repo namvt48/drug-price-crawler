@@ -59,6 +59,7 @@ class CsvWriter:
             "strength": price.strength,
             "price_vnd": str(price.price_vnd),
             "price_display": price.price_display,
+            "stock_status": price.stock_status.value,
             "source": price.source.value if hasattr(price.source, "value") else str(price.source),
             "source_url": price.source_url,
             "crawled_at": price.crawled_at.isoformat(timespec="seconds"),

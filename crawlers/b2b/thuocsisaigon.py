@@ -18,6 +18,7 @@ from selectolax.parser import HTMLParser
 
 from utils.models import DrugPrice, SourceName
 from utils.price_parser import format_price, parse_price
+from utils.stock_status import detect_stock_status
 
 from ..base import AuthError, BaseCrawler
 
@@ -29,6 +30,7 @@ _SAFETY_MAX_PAGES = 200
 
 class ThuocSiSaiGonCrawler(BaseCrawler):
     source_name = SourceName.THUOCSISAIGON
+    direct_fetch_supported = True
 
     def _is_auth_error(self, resp: httpx.Response) -> bool:
         loc = resp.headers.get("location", "")
@@ -124,7 +126,19 @@ class ThuocSiSaiGonCrawler(BaseCrawler):
                 if price_text:
                     break
                 container = container.parent
-            items.append({"name": name, "url": href, "price": price_text})
+            out_node = (
+                container.css_first(".out-of-stock")
+                if container is not None
+                else None
+            )
+            items.append(
+                {
+                    "name": name,
+                    "url": href,
+                    "price": price_text,
+                    "stock_status": "out_of_stock" if out_node is not None else "",
+                }
+            )
         return items
 
     def _parse_product(self, raw: dict) -> DrugPrice | None:
@@ -136,7 +150,48 @@ class ThuocSiSaiGonCrawler(BaseCrawler):
             drug_name=raw.get("name", ""),
             price_vnd=price,
             price_display=format_price(price),
+            stock_status=detect_stock_status(raw),
             source=self.source_name,
             source_url=url or BASE,
             product_id=raw.get("url", ""),
+        )
+
+    async def fetch_price_by_id(self, product_id: str) -> DrugPrice | None:
+        """Lấy trang chi tiết chính xác; product_id của site là path tương đối."""
+        if not product_id:
+            return None
+        url = product_id if product_id.startswith("http") else f"{BASE}/{product_id.lstrip('/')}"
+        await self.ensure_auth()
+        resp = await self.request_with_retry("GET", url)
+        if resp.status_code != 200:
+            return None
+        tree = HTMLParser(resp.text)
+        name_node = next(
+            (node for selector in ("h1", *_NAME_SELECTORS) if (node := tree.css_first(selector))),
+            None,
+        )
+        if name_node is None:
+            return None
+        price_node = next(
+            (node for selector in _PRICE_SELECTORS if (node := tree.css_first(selector))),
+            None,
+        )
+        out_node = (
+            tree.css_first(".out-of-stock")
+            or tree.css_first(".sold-out")
+            or tree.css_first("[class*=soldout]")
+        )
+        stock_node = out_node or tree.css_first(".stock") or tree.css_first(".availability")
+        stock_text = (
+            "out_of_stock" if out_node is not None else stock_node.text(strip=True) if stock_node else ""
+        )
+        price = parse_price(price_node.text(strip=True) if price_node else "")
+        return DrugPrice(
+            drug_name=name_node.text(strip=True),
+            price_vnd=price,
+            price_display=format_price(price),
+            stock_status=detect_stock_status(text=stock_text),
+            source=self.source_name,
+            source_url=url,
+            product_id=product_id,
         )

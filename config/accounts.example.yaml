@@ -78,7 +78,7 @@ sites:
   # ---------------------------------------------------------------------------
   thuochapu:
     enabled: true
-    name: "Thuốc Hà Phú"
+    name: "Thuốc Hapu"
     base_url: "https://thuochapu.com"
     login_url: "https://thuochapu.com/dang-nhap.html"
     search_url: "https://thuochapu.com/search.html?q={keyword}"
@@ -122,7 +122,7 @@ sites:
   # ---------------------------------------------------------------------------
   thuocsi:
     enabled: true
-    name: "Thuốc Sĩ"
+    name: "Thuốc Sỉ"
     base_url: "https://thuocsi.vn"
     login_url: "https://thuocsi.vn/login"
     search_url: "https://thuocsi.vn/dashboard"
@@ -168,7 +168,7 @@ sites:
   # ---------------------------------------------------------------------------
   thuocsisaigon:
     enabled: true
-    name: "Thuốc Sĩ Sài Gòn"
+    name: "Thuốc Sỉ Sài Gòn"
     base_url: "https://thuocsisaigon.vn"
     login_url: "https://thuocsisaigon.vn/login"
     search_url: "https://thuocsisaigon.vn/search?type=product&q=filter=(title%3Aproduct%20contains%20{keyword})"
@@ -190,7 +190,7 @@ sites:
   # ---------------------------------------------------------------------------
   duocphamgiasi:
     enabled: true
-    name: "Dược Phẩm Gia Sỉ"
+    name: "Dược Phẩm Giá Sỉ"
     base_url: "https://duocphamgiasi.vn"
     login_url: "https://duocphamgiasi.vn/tai-khoan"
     search_url: "https://duocphamgiasi.vn/?post_type=product&s={keyword}"
@@ -212,7 +212,7 @@ sites:
   # ---------------------------------------------------------------------------
   bachhoathuoc:
     enabled: true
-    name: "Bách Hóa Thuốc (Sales)"
+    name: "Bách Hóa Thuốc"
     base_url: "https://sales.bachhoathuoc.com"
     login_url: "https://sales.bachhoathuoc.com/login"
     search_url: "https://sales.bachhoathuoc.com/search?router=productListing&query={keyword}"
@@ -241,6 +241,6 @@ filters:
 
 # --- Watchlist (theo dõi giá định kỳ) — refresh giá mỗi N phút. Catalog (tên+SKU,
 # KHÔNG có giá, dùng để search gợi ý) nạp tĩnh từ
-# output/catalog_master_entity_resolved.xlsx, không còn TTL/crawl lại.
+# output/catalog_master.xlsx, không còn TTL/crawl lại.
 watchlist:
   refresh_interval_minutes: 10   # chu kỳ refresh giá watchlist

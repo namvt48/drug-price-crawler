@@ -1,5 +1,5 @@
 """Tests cho utils.url_detect — dùng URL mẫu THẬT lấy từ
-output/catalog_master_entity_resolved.xlsx (source_listings) để đảm bảo quy tắc
+output/catalog_master.xlsx (source_listings) để đảm bảo quy tắc
 tách product_id khớp đúng format các crawler thật sự dùng."""
 
 from __future__ import annotations

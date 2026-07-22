@@ -1,0 +1,331 @@
+====================================================================
+              PHARMAPRICE — HƯỚNG DẪN SỬ DỤNG
+        Công cụ dò & so sánh GIÁ THUỐC SỈ (B2B) từ 9 website
+====================================================================
+
+Phiên bản tài liệu: v1.2
+Ngôn ngữ: Tiếng Việt
+
+
+--------------------------------------------------------------------
+MỤC LỤC
+--------------------------------------------------------------------
+  1. PharmaPrice là gì?
+  2. Điền tài khoản 9 nhà thuốc (BẮT BUỘC)
+  3. Màn hình chính — tổng quan
+  4. Nguyên tắc dữ liệu sản phẩm
+  5. QUY TRÌNH DÙNG CƠ BẢN (5 bước)
+  6. Đọc bảng kết quả & các trạng thái giá
+  7. Thêm sản phẩm mới bằng tên + link
+  8. Crawl lại tất cả (cập nhật giá mới)
+  9. Xuất file Excel
+ 10. Danh sách 9 nhà thuốc
+ 11. XỬ LÝ SỰ CỐ THƯỜNG GẶP
+ 12. Câu hỏi thường gặp
+
+
+--------------------------------------------------------------------
+1. PHARMAPRICE LÀ GÌ?
+--------------------------------------------------------------------
+PharmaPrice là công cụ tự động ĐĂNG NHẬP vào 9 website bán thuốc sỉ
+(B2B) của Việt Nam, lấy GIÁ SỈ của đúng sản phẩm đã lưu, rồi gom lại
+một bảng để bạn SO SÁNH giá giữa các nhà thuốc và biết nơi nào RẺ NHẤT.
+
+Vì sao phải đăng nhập? Cả 9 site đều ẨN giá với khách vãng lai —
+chỉ khi đăng nhập bằng tài khoản B2B thật mới thấy giá sỉ. Do đó
+bạn BẮT BUỘC phải có tài khoản của từng nhà thuốc (xem mục 2).
+
+Giá live trên màn hình chính chỉ được lấy bằng product ID hoặc link
+trang chi tiết đã lưu. Ứng dụng không dùng tên để đoán một sản phẩm
+gần giống khi ID/link bị lỗi.
+
+
+--------------------------------------------------------------------
+2. ĐIỀN TÀI KHOẢN 9 NHÀ THUỐC (BẮT BUỘC)
+--------------------------------------------------------------------
+Không có tài khoản đúng => ứng dụng không lấy được giá của website đó.
+Tùy dữ liệu nhận được, bảng sẽ hiện "giá ẩn" hoặc "lỗi giá"; ứng dụng
+không dùng số 0 làm một mức giá hợp lệ để so sánh.
+
+CÓ 2 CÁCH ĐIỀN:
+
+CÁCH 1 — Ngay trong app (dễ nhất):
+  - Mở app, bấm nút "Sửa tài khoản" ở góc trên.
+  - Với mỗi site, nhập Username và Password.
+  - Bấm "Hiện" để xem mật khẩu đang gõ cho khỏi sai.
+  - Bấm "Lưu". App lưu vào config/accounts.yaml.
+
+CÁCH 2 — Sửa trực tiếp file config/accounts.yaml (bằng Notepad):
+  Tìm từng site và điền username/password thật. Ví dụ:
+       thuochapu:
+         credentials:
+           username: "so_dien_thoai_hoac_email"
+           password: "mat_khau"
+
+LƯU Ý QUAN TRỌNG VỀ TÊN ĐĂNG NHẬP (mỗi site 1 kiểu):
+  - thuocsisaigon : đăng nhập bằng EMAIL.
+  - thuoctot3mien : ô ghi "email" nhưng thực chất nhập SỐ ĐIỆN THOẠI.
+  - chothuoc247   : đăng nhập bằng SỐ ĐIỆN THOẠI.
+  - Các site còn lại: dùng đúng tài khoản bạn đã đăng ký với họ.
+
+BẢO MẬT: file config/accounts.yaml chứa MẬT KHẨU dạng chữ thường.
+  - Không gửi file này cho người khác.
+  - Không đưa lên mạng/GitHub (đã được loại trừ sẵn).
+
+
+--------------------------------------------------------------------
+3. MÀN HÌNH CHÍNH — TỔNG QUAN
+--------------------------------------------------------------------
+Khi mở app, bạn thấy:
+
+  - Trên cùng: tên "PharmaPrice" + nút "Sửa tài khoản".
+  - 2 thẻ (tab):
+       [Tìm & Kết quả]  <- nơi làm việc chính
+       [Log]            <- nhật ký chi tiết (để soi lỗi khi cần)
+
+  - Khi mới mở, app tự động:
+       (a) Tải danh mục thuốc chuẩn (hiện "Đang tải catalog..." vài chục
+           giây — chờ tải xong mới gõ tìm được).
+       (b) Kiểm tra đăng nhập cả 9 site trong nền. Site nào SAI tài khoản
+           sẽ hiện 1 popup cảnh báo (mỗi site chỉ báo 1 lần/lần mở app).
+
+
+--------------------------------------------------------------------
+4. NGUYÊN TẮC DỮ LIỆU SẢN PHẨM
+--------------------------------------------------------------------
+  1) Một sản phẩm có thể có mặt trên nhiều website.
+
+  2) Với cùng một sản phẩm, mỗi website chỉ được lưu DUY NHẤT một
+     listing, gồm website, product ID và link trang chi tiết.
+
+  3) Link phải là trang CHI TIẾT của đúng sản phẩm và đúng quy cách;
+     không dùng link tìm kiếm, danh mục, trang chủ hoặc quy cách khác.
+
+  4) Tên sản phẩm là nhãn do người dùng đặt và có thể sửa. Tên không
+     được dùng làm định danh khi lấy giá.
+
+  5) Nếu không lấy được đúng ID/link đã lưu, ứng dụng báo "lỗi giá".
+     Ứng dụng không tìm theo tên để thay bằng một sản phẩm gần giống.
+
+Ví dụ: Alaxan hộp 10 vỉ x 10 viên và Alaxan hộp 25 vỉ x 4 viên có tên
+gần giống nhưng là hai trang sản phẩm khác nhau. Phải dán đúng link của
+quy cách cần theo dõi.
+
+
+--------------------------------------------------------------------
+5. QUY TRÌNH DÙNG CƠ BẢN (5 BƯỚC)
+--------------------------------------------------------------------
+  BƯỚC 1: Chờ dòng "Đang tải catalog..." biến mất.
+
+  BƯỚC 2: Gõ tên thuốc vào ô "Tìm thuốc".
+
+  BƯỚC 3: Chọn đúng sản phẩm trong danh sách rồi bấm "Thêm".
+
+  BƯỚC 4: Ứng dụng lấy giá live theo ID/link đã lưu cho từng website.
+
+  BƯỚC 5: Xem các cột giá và cột "Rẻ nhất ★".
+
+Danh sách đã chọn được lưu lại. Khi mở ứng dụng lần sau, hãy crawl lại
+nếu cần giá mới nhất.
+
+
+--------------------------------------------------------------------
+6. ĐỌC BẢNG KẾT QUẢ & CÁC TRẠNG THÁI GIÁ
+--------------------------------------------------------------------
+Bảng "Đã chọn" gồm:
+  - STT: số thứ tự.
+  - ↻: crawl lại riêng sản phẩm.
+  - Tên thuốc: tên hiển thị do người dùng đặt.
+  - Rẻ nhất ★: website có giá hợp lệ thấp nhất.
+  - Một cột giá cho mỗi website.
+
+Ý NGHĨA CÁC TRẠNG THÁI:
+
+  - Giá dạng "111.000đ": lấy được đúng sản phẩm và có giá hợp lệ.
+    Dấu ★ cho biết đây là giá thấp nhất trong các website có giá.
+
+  - "hết hàng": website đã trả tín hiệu tồn kho rõ ràng, ví dụ
+    out_of_stock, sold out, available=false hoặc số lượng tồn bằng 0.
+    Sản phẩm hết hàng không được tính vào cột "Rẻ nhất ★".
+
+  - "giá ẩn": đã lấy được đúng sản phẩm nhưng website không cung cấp giá
+    hợp lệ và cũng không xác nhận hết hàng. Giá bằng 0 một mình không đủ để
+    kết luận sản phẩm đã hết hàng.
+
+  - "lỗi giá": không lấy được record của đúng ID/link. Nguyên nhân có thể
+    là đăng nhập lỗi, link/ID sai, trang đã bị xóa, website đang chặn truy
+    cập hoặc website đã thay đổi API.
+
+  - "không có SP": catalog không có listing của sản phẩm trên website đó.
+
+  - "chưa update": sản phẩm đã có link nhưng chưa được crawl trong phiên
+    hoặc dữ liệu đã lưu chưa được cập nhật lại.
+
+Ứng dụng chỉ hiển thị "hết hàng" khi website cung cấp bằng chứng rõ ràng.
+Nếu website không công bố trạng thái tồn kho, ứng dụng giữ "giá ẩn" hoặc
+"lỗi giá" thay vì tự đoán.
+
+Ứng dụng KHÔNG lấy một sản phẩm tên gần giống để lấp vào ô lỗi giá.
+Hãy mở link đã lưu trên trình duyệt và kiểm tra đúng ID, đúng quy cách.
+
+
+--------------------------------------------------------------------
+7. THÊM SẢN PHẨM MỚI BẰNG TÊN + LINK
+--------------------------------------------------------------------
+Nếu sản phẩm chưa có trong catalog:
+
+  1) Bấm "Thêm sản phẩm mới".
+
+  2) Dán link trang chi tiết ở các website có bán. Website không có
+     sản phẩm thì để trống; mỗi website chỉ có một ô link.
+
+  3) Bấm "Xác nhận". Ứng dụng tách product ID trực tiếp từ link.
+     Link không nhận diện được sẽ không được lưu. Nếu không có link hợp
+     lệ nào, ứng dụng yêu cầu nhập lại.
+
+  4) Ở màn hình kiểm tra, nhập "Tên sản phẩm". Đây là tên do bạn tự đặt,
+     có thể sửa sau và không ảnh hưởng product ID.
+
+  5) Kiểm tra trạng thái của từng website:
+       - "Tốt": lấy được đúng ID/link và có giá.
+       - "giá ẩn": đúng sản phẩm nhưng chưa có giá hợp lệ.
+       - "hết hàng": website xác nhận sản phẩm không còn tồn kho.
+       - "lỗi giá": không lấy được sản phẩm bằng ID/link đó.
+
+  6) Có thể nhấp đúp một dòng để sửa link, rồi bấm "Kiểm tra lại".
+
+  7) Bấm "Lưu" khi tên và các link đã đúng.
+
+QUY TẮC TÊN TRÙNG:
+  - Không được thêm tên đã tồn tại trong catalog.
+  - Việc kiểm tra không phân biệt hoa/thường, dấu tiếng Việt và khoảng
+    trắng thừa. "Thuốc Bổ Gan" và "THUOC  BO GAN" được coi là trùng.
+  - Nếu báo "Tên bị trùng", hãy sửa sản phẩm đã có hoặc đặt tên khác nếu
+    đây thực sự là một sản phẩm khác.
+
+SỬA TÊN/LINK SAU KHI THÊM:
+  - Nhấp đúp hoặc nhấp chuột phải vào sản phẩm để mở bảng chi tiết.
+  - Nhấp đúp dòng website để sửa tên hoặc link.
+  - Sửa tên chỉ đổi nhãn hiển thị, không đổi product ID.
+  - Sửa link sẽ THAY THẾ listing hiện tại, không tạo listing thứ hai cho
+    cùng sản phẩm và website.
+
+
+--------------------------------------------------------------------
+8. CRAWL LẠI TẤT CẢ (CẬP NHẬT GIÁ MỚI)
+--------------------------------------------------------------------
+Giá có thể thay đổi theo thời gian. Để lấy lại giá MỚI NHẤT cho TẤT CẢ
+thuốc đang có trong bảng:
+
+  - Bấm "Crawl lại tất cả".
+  - App chạy tuần tự từng thuốc (tránh bị nhà thuốc chặn vì hỏi quá nhanh).
+  - Chờ đến khi Log báo "Crawl lại xong".
+
+  => Nên crawl lại trước khi xuất báo giá, để chắc chắn giá cập nhật.
+
+
+--------------------------------------------------------------------
+9. XUẤT FILE EXCEL
+--------------------------------------------------------------------
+  - Bấm "Xuất Excel" để xuất file .xlsx.
+  - Giá rẻ nhất của mỗi thuốc được đánh dấu để dễ so sánh.
+  - Dữ liệu xuất có trường stock_status:
+       unknown      = website không công bố rõ tồn kho;
+       in_stock     = website xác nhận còn hàng;
+       out_of_stock = website xác nhận hết hàng.
+
+  Chọn nơi lưu, đặt tên file, bấm Lưu. Xong app báo "Xuất xong".
+
+
+--------------------------------------------------------------------
+10. DANH SÁCH 9 NHÀ THUỐC
+--------------------------------------------------------------------
+  1) giathuoctot     (giathuoctot.com)
+  2) chothuoc247     (chothuoc247.vn)
+  3) thuochapu       (thuochapu.com)
+  4) thuocsi         (thuocsi.vn)
+  5) thuoctot3mien   (thuoctot3mien.vn)
+  6) thuocsisaigon   (thuocsisaigon.vn)
+  7) duocphamgiasi   (duocphamgiasi.vn)
+  8) chothuoctot     (chothuoctot.vn)
+  9) bachhoathuoc    (sales.bachhoathuoc.com)
+
+  Mỗi site cần 1 tài khoản riêng (mục 2).
+
+
+--------------------------------------------------------------------
+11. XỬ LÝ SỰ CỐ THƯỜNG GẶP
+--------------------------------------------------------------------
+▸ Mới mở app đã hiện popup "Đăng nhập thất bại khi khởi động":
+    => Tài khoản của site đó SAI hoặc HẾT HẠN. Vào "Sửa tài khoản",
+       kiểm tra lại username/password (đúng kiểu đăng nhập ở mục 2).
+       Thử đăng nhập tay trên web của site đó để chắc tài khoản còn dùng được.
+
+▸ Website hiển thị "hết hàng":
+    => Website đã xác nhận hết tồn kho. Đây không phải lỗi giá và sản phẩm
+       không được dùng để tính giá rẻ nhất.
+
+▸ Giá trên website bằng 0 nhưng app hiển thị "giá ẩn":
+    => Website chưa cung cấp tín hiệu tồn kho rõ ràng. App không tự kết luận
+       "hết hàng" chỉ dựa vào số 0.
+
+▸ App hiển thị "lỗi giá" nhưng link vẫn mở được:
+    => Kiểm tra đăng nhập, đúng product ID/quy cách và tab Log. Website có
+       thể đã đổi API hoặc không cho tài khoản hiện tại truy cập giá.
+
+▸ Gõ tìm nhưng không có gợi ý:
+    => Catalog chưa tải xong. Chờ dòng "Đang tải catalog..." biến mất.
+
+▸ Thuốc cần tìm không có trong gợi ý:
+    => Dùng "Thêm sản phẩm mới" để thêm tên + link (mục 7).
+
+▸ App báo "Tên bị trùng":
+    => Tìm sản phẩm đã có và sửa/thêm link trên sản phẩm đó. Kiểm tra trùng
+       không phân biệt chữ hoa/thường, dấu tiếng Việt và khoảng trắng thừa.
+
+▸ Một thuốc thiếu giá ở 1 site (site khác vẫn có):
+    => Mở đúng link đã lưu để kiểm tra. Không thay bằng sản phẩm tên gần
+       giống nhưng khác quy cách. Nhấp đúp dòng để sửa link nếu cần.
+
+▸ Giá nghi ngờ sai:
+    => Bấm "Crawl lại tất cả" để lấy lại giá mới. Nếu vẫn nghi ngờ,
+       mở tab Log, copy log và gửi cho người hỗ trợ.
+
+--------------------------------------------------------------------
+12. CÂU HỎI THƯỜNG GẶP
+--------------------------------------------------------------------
+Hỏi: App có tự lưu mật khẩu của tôi không?
+Đáp: Có, lưu trong config/accounts.yaml ngay cạnh app trên máy bạn,
+     KHÔNG gửi đi đâu. Giữ file này riêng tư.
+
+Hỏi: Giá lấy được là giá sỉ hay giá lẻ?
+Đáp: Giá SỈ (B2B) — đúng giá bạn thấy khi đăng nhập tài khoản sỉ.
+
+Hỏi: Bao lâu nên crawl lại?
+Đáp: Trước mỗi lần làm báo giá, hoặc khi nghi giá đã đổi.
+
+Hỏi: Tên sản phẩm có quyết định sản phẩm được crawl không?
+Đáp: Không. Tên chỉ là nhãn do người dùng đặt; ID/link mới là định danh
+     được dùng để lấy giá live.
+
+Hỏi: Một sản phẩm có thể có nhiều website không?
+Đáp: Có, nhưng trên mỗi website chỉ được có một listing duy nhất.
+
+Hỏi: Khi link lỗi, app có tự tìm sản phẩm tên giống không?
+Đáp: Không. App báo lỗi giá để tránh lấy nhầm sản phẩm hoặc quy cách.
+
+Hỏi: "Hết hàng", "giá ẩn" và "lỗi giá" khác nhau thế nào?
+Đáp: "Hết hàng" là website đã xác nhận không còn tồn kho. "Giá ẩn" là
+     đúng sản phẩm nhưng chưa có giá và chưa đủ bằng chứng hết hàng.
+     "Lỗi giá" là app không lấy được record của đúng ID/link.
+
+Hỏi: Sản phẩm hết hàng có được tính là rẻ nhất không?
+Đáp: Không. Chỉ các record có giá dương hợp lệ mới được so sánh.
+
+Hỏi: Có thể đổi tên sau khi thêm không?
+Đáp: Có. Đổi tên không làm thay đổi ID/link đã lưu.
+
+
+====================================================================
+                     HẾT — CHÚC BẠN DÙNG TỐT!
+====================================================================

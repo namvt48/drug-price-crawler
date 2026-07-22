@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from utils.models import DrugPrice, SourceName
 from utils.price_parser import format_price, parse_price
+from utils.stock_status import detect_stock_status
 
 from ..base import AuthError, BaseCrawler
 
@@ -19,6 +20,7 @@ _PAGE = 200  # max limit per request (API tối đa 200)
 
 class GiathuoctotCrawler(BaseCrawler):
     source_name = SourceName.GIATHUOCTOT
+    direct_fetch_supported = True
 
     def _api_headers(self) -> dict[str, str]:
         return {
@@ -68,7 +70,9 @@ class GiathuoctotCrawler(BaseCrawler):
         return products
 
     def _parse_product(self, raw: dict) -> DrugPrice | None:
-        price = parse_price(raw.get("basePrice") or raw.get("pricingTablePrice") or 0)
+        # pricingTablePrice là giá sỉ theo bảng giá của tài khoản đăng nhập;
+        # basePrice là giá niêm yết. App so sánh giá B2B nên ưu tiên giá bảng.
+        price = parse_price(raw.get("pricingTablePrice") or raw.get("basePrice") or 0)
         manufacturer = (raw.get("manufacturer") or {}).get("name", "")
         slug = raw.get("slug", "")
         image_urls = raw.get("imageUrls") or []
@@ -80,8 +84,26 @@ class GiathuoctotCrawler(BaseCrawler):
             dosage_form=raw.get("retailUnit", ""),
             price_vnd=price,
             price_display=format_price(price),
+            stock_status=detect_stock_status(raw),
             source=self.source_name,
             source_url=f"{self.config.base_url}/product/{slug}" if slug else self.config.base_url,
             product_id=slug or str(raw.get("id", "")),
             image_url=image_url,
         )
+
+    async def fetch_price_by_id(self, product_id: str) -> DrugPrice | None:
+        """Lấy đúng một sản phẩm qua endpoint chi tiết theo slug."""
+        if not product_id:
+            return None
+        await self.ensure_auth()
+        resp = await self.request_with_retry(
+            "GET",
+            f"{API}/product/product/slug/{product_id}",
+            headers=self._api_headers(),
+        )
+        if resp.status_code != 200:
+            return None
+        body = resp.json() or {}
+        if not isinstance(body, dict) or not body.get("name"):
+            return None
+        return self._parse_product(body)

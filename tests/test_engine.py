@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from crawlers.engine import CrawlerEngine
-from utils.models import CatalogItem, DrugPrice, SiteConfig, SourceName, WatchlistItem
+from utils.models import CatalogItem, DrugPrice, SourceName, WatchlistItem
 
 
 def _write_config(path: Path) -> None:
@@ -39,7 +38,9 @@ sites:
     )
 
 
-def _dp(name: str = "Test", source: SourceName = SourceName.GIATHUOCTOT, price: int = 1000) -> DrugPrice:
+def _dp(
+    name: str = "Test", source: SourceName = SourceName.GIATHUOCTOT, price: int = 1000
+) -> DrugPrice:
     return DrugPrice(drug_name=name, price_vnd=price, source=source)
 
 
@@ -65,12 +66,18 @@ class TestAvailableSites:
 
 
 class TestCrawl:
-    def test_crawl_aggregates_results(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_crawl_aggregates_results(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
 
-        async def fake_crawl_one(self: CrawlerEngine, site_id: str, keyword: str, force_refresh: bool = False) -> list[DrugPrice]:
+        async def fake_crawl_one(
+            self: CrawlerEngine, site_id: str, keyword: str, force_refresh: bool = False
+        ) -> list[DrugPrice]:
             return [_dp(f"Drug_{site_id}", SourceName.GIATHUOCTOT, 100)]
 
         monkeypatch.setattr(CrawlerEngine, "_crawl_one", fake_crawl_one)
@@ -79,27 +86,41 @@ class TestCrawl:
         assert all(r.drug_name.startswith("Drug_") for r in results)
         engine.close()
 
-    def test_progress_callback(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_progress_callback(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
 
-        async def fake_crawl_one(self: CrawlerEngine, site_id: str, keyword: str, force_refresh: bool = False) -> list[DrugPrice]:
+        async def fake_crawl_one(
+            self: CrawlerEngine, site_id: str, keyword: str, force_refresh: bool = False
+        ) -> list[DrugPrice]:
             return [_dp()]
 
         monkeypatch.setattr(CrawlerEngine, "_crawl_one", fake_crawl_one)
         calls: list[tuple[int, int]] = []
-        asyncio.run(engine.crawl("kw", progress=lambda done, total: calls.append((done, total))))
+        asyncio.run(
+            engine.crawl("kw", progress=lambda done, total: calls.append((done, total)))
+        )
         assert len(calls) >= 1
         assert calls[-1][0] == calls[-1][1]
         engine.close()
 
-    def test_site_exception_isolated(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_site_exception_isolated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
 
-        async def fake_crawl_one(self: CrawlerEngine, site_id: str, keyword: str, force_refresh: bool = False) -> list[DrugPrice]:
+        async def fake_crawl_one(
+            self: CrawlerEngine, site_id: str, keyword: str, force_refresh: bool = False
+        ) -> list[DrugPrice]:
             if site_id == "giathuoctot":
                 raise RuntimeError("boom")
             return [_dp("OK")]
@@ -110,10 +131,14 @@ class TestCrawl:
         assert all(r.drug_name == "OK" for r in results)
         engine.close()
 
-    def test_cache_hit_skips_crawl(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_cache_hit_skips_crawl(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=True)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=True
+        )
         cached_data = [_dp("Cached", SourceName.GIATHUOCTOT, 999)]
         engine.cache.set("giathuoctot", "kw", cached_data, ttl_hours=24)
 
@@ -146,7 +171,9 @@ class TestCrawl:
     def test_crawl_one_no_config_returns_empty(self, tmp_path: Path) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
         result = asyncio.run(engine._crawl_one("nonexistent", "kw"))
         assert result == []
         engine.close()
@@ -160,6 +187,8 @@ class TestKeywordSearchUnsupported:
     def _fake_crawler_cls(received: list[str], items: list[DrugPrice]):
         class _FakeCrawler:
             keyword_search_supported = False
+            direct_fetch_supported = True
+            direct_fetch_supported = True
 
             def __init__(self, *args, **kwargs):
                 pass
@@ -184,14 +213,18 @@ class TestKeywordSearchUnsupported:
     ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=True)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=True
+        )
         received: list[str] = []
         items = [_dp("Boganic hop", price=1000), _dp("Paracetamol", price=2000)]
 
         from crawlers import engine as engine_mod
 
         monkeypatch.setitem(
-            engine_mod.CRAWLER_REGISTRY, "giathuoctot", self._fake_crawler_cls(received, items)
+            engine_mod.CRAWLER_REGISTRY,
+            "giathuoctot",
+            self._fake_crawler_cls(received, items),
         )
         results = asyncio.run(engine.crawl("boganic", site_ids=["giathuoctot"]))
 
@@ -207,14 +240,18 @@ class TestKeywordSearchUnsupported:
     ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=True)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=True
+        )
         received: list[str] = []
         items = [_dp("Boganic hop", price=1000), _dp("Paracetamol", price=2000)]
 
         from crawlers import engine as engine_mod
 
         monkeypatch.setitem(
-            engine_mod.CRAWLER_REGISTRY, "giathuoctot", self._fake_crawler_cls(received, items)
+            engine_mod.CRAWLER_REGISTRY,
+            "giathuoctot",
+            self._fake_crawler_cls(received, items),
         )
         asyncio.run(engine.crawl("boganic", site_ids=["giathuoctot"]))
         results2 = asyncio.run(engine.crawl("paracetamol", site_ids=["giathuoctot"]))
@@ -230,7 +267,9 @@ class TestForceRefresh:
     ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=True)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=True
+        )
         engine.cache.set("giathuoctot", "kw", [_dp("Cached", price=999)], ttl_hours=24)
 
         class _FakeCrawler:
@@ -266,7 +305,9 @@ class TestEngineFilters:
     ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
         engine.filters.name_keywords = ["boganic"]
 
         async def fake_crawl_one(
@@ -325,7 +366,9 @@ class TestCacheDelegation:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
         engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db")
-        engine.cache.set("s", "k", [_dp("Aspirin", SourceName.GIATHUOCTOT, 100)], ttl_hours=24)
+        engine.cache.set(
+            "s", "k", [_dp("Aspirin", SourceName.GIATHUOCTOT, 100)], ttl_hours=24
+        )
         results = engine.find_by_name("Aspirin")
         assert len(results) == 1
         assert results[0].drug_name == "Aspirin"
@@ -380,22 +423,29 @@ class _FakeCrawler:
 
 
 class TestRefreshWatchlist:
-    def test_refresh_updates_prices(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_refresh_updates_prices(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
 
         from crawlers import engine as engine_mod
+
         monkeypatch.setitem(engine_mod.CRAWLER_REGISTRY, "giathuoctot", _FakeCrawler)
 
-        engine.cache.add_to_watchlist(WatchlistItem(
-            site_id="giathuoctot",
-            product_id="boganic-slug",
-            source=SourceName.GIATHUOCTOT,
-            drug_name="Boganic Forte",
-            search_name="boganic",
-            added_at=0.0,
-        ))
+        engine.cache.add_to_watchlist(
+            WatchlistItem(
+                site_id="giathuoctot",
+                product_id="boganic-slug",
+                source=SourceName.GIATHUOCTOT,
+                drug_name="Boganic Forte",
+                search_name="boganic",
+                added_at=0.0,
+            )
+        )
 
         updated = asyncio.run(engine.refresh_watchlist_prices())
         assert updated == 1
@@ -407,33 +457,49 @@ class TestRefreshWatchlist:
     def test_refresh_empty_watchlist(self, tmp_path: Path) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
         updated = asyncio.run(engine.refresh_watchlist_prices())
         assert updated == 0
         engine.close()
 
-    def test_refresh_error_isolated(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_refresh_error_isolated(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
 
         class _BoomCrawler:
-            def __init__(self, *a, **kw): pass
-            async def __aenter__(self): return self
-            async def __aexit__(self, *a): return None
-            async def crawl(self, kw): raise RuntimeError("boom")
+            def __init__(self, *a, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return None
+
+            async def crawl(self, kw):
+                raise RuntimeError("boom")
 
         from crawlers import engine as engine_mod
+
         monkeypatch.setitem(engine_mod.CRAWLER_REGISTRY, "giathuoctot", _BoomCrawler)
 
-        engine.cache.add_to_watchlist(WatchlistItem(
-            site_id="giathuoctot",
-            product_id="p1",
-            source=SourceName.GIATHUOCTOT,
-            drug_name="X",
-            search_name="x",
-            added_at=0.0,
-        ))
+        engine.cache.add_to_watchlist(
+            WatchlistItem(
+                site_id="giathuoctot",
+                product_id="p1",
+                source=SourceName.GIATHUOCTOT,
+                drug_name="X",
+                search_name="x",
+                added_at=0.0,
+            )
+        )
 
         updated = asyncio.run(engine.refresh_watchlist_prices())
         assert updated == 0
@@ -444,9 +510,12 @@ class TestWatchlistDelegation:
     def test_add_and_get_watchlist(self, tmp_path: Path) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
 
         from utils.models import CatalogItem
+
         ci = CatalogItem(
             product_id="boganic-slug",
             drug_name="Boganic",
@@ -465,9 +534,12 @@ class TestWatchlistDelegation:
     def test_remove_from_watchlist(self, tmp_path: Path) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
 
         from utils.models import CatalogItem
+
         ci = CatalogItem(
             product_id="p1",
             drug_name="X",
@@ -481,11 +553,18 @@ class TestWatchlistDelegation:
     def test_suggest_catalog(self, tmp_path: Path) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
 
         engine._master_catalog = [
-            CatalogItem(product_id="p1", drug_name="Boganic", search_name="boganic",
-                        source=SourceName.GIATHUOCTOT, master_product_id="MP1"),
+            CatalogItem(
+                product_id="p1",
+                drug_name="Boganic",
+                search_name="boganic",
+                source=SourceName.GIATHUOCTOT,
+                master_product_id="MP1",
+            ),
         ]
         results = engine.suggest_catalog("boga")
         assert len(results) == 1
@@ -497,18 +576,26 @@ class TestWatchlistDelegation:
     ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
         engine._master_catalog = [
             CatalogItem(
-                product_id="bht-1", drug_name="Alpha", source=SourceName.BACHHOATHUOC,
+                product_id="bht-1",
+                drug_name="Alpha",
+                source=SourceName.BACHHOATHUOC,
                 master_product_id="MP1",
             ),
             CatalogItem(
-                product_id="bht-2", drug_name="Beta", source=SourceName.BACHHOATHUOC,
+                product_id="bht-2",
+                drug_name="Beta",
+                source=SourceName.BACHHOATHUOC,
                 master_product_id="MP2",
             ),
             CatalogItem(
-                product_id="hapu-1", drug_name="Alpha", source=SourceName.THUOCHAPU,
+                product_id="hapu-1",
+                drug_name="Alpha",
+                source=SourceName.THUOCHAPU,
                 master_product_id="MP1",
             ),
         ]
@@ -529,16 +616,23 @@ class TestWatchlistDelegation:
         không load lại (xem CrawlerEngine.__init__ comment về catalog_lock)."""
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
 
         calls = 0
 
         def fake_load(path=None, log=None):
             nonlocal calls
             calls += 1
-            return [CatalogItem(product_id="p1", drug_name="X", source=SourceName.GIATHUOCTOT)]
+            return [
+                CatalogItem(
+                    product_id="p1", drug_name="X", source=SourceName.GIATHUOCTOT
+                )
+            ]
 
         import crawlers.engine as engine_mod
+
         monkeypatch.setattr(engine_mod, "load_master_catalog", fake_load)
 
         assert engine.warm_master_catalog() == 1
@@ -553,7 +647,10 @@ class TestAddManualProduct:
     ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
+        engine._master_catalog = []
 
         saved = {}
 
@@ -563,6 +660,7 @@ class TestAddManualProduct:
             return "MP999999"
 
         import crawlers.engine as engine_mod
+
         monkeypatch.setattr(engine_mod, "append_manual_product", fake_append)
 
         items = engine.add_manual_product(
@@ -575,7 +673,10 @@ class TestAddManualProduct:
             "Sản phẩm Test",
         )
         assert len(items) == 2
-        assert {i.source for i in items} == {SourceName.GIATHUOCTOT, SourceName.CHOTHUOC247}
+        assert {i.source for i in items} == {
+            SourceName.GIATHUOCTOT,
+            SourceName.CHOTHUOC247,
+        }
         assert all(i.master_product_id == "MP999999" for i in items)
         assert all(i.drug_name == "Sản phẩm Test" for i in items)
         assert saved["name"] == "Sản phẩm Test"
@@ -586,7 +687,9 @@ class TestAddManualProduct:
     ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
 
         called = False
 
@@ -596,9 +699,12 @@ class TestAddManualProduct:
             return "MP1"
 
         import crawlers.engine as engine_mod
+
         monkeypatch.setattr(engine_mod, "append_manual_product", fake_append)
 
-        items = engine.add_manual_product({"giathuoctot": "https://khong-hop-le.com"}, "X")
+        items = engine.add_manual_product(
+            {"giathuoctot": "https://khong-hop-le.com"}, "X"
+        )
         assert items == []
         assert called is False
         engine.close()
@@ -608,14 +714,20 @@ class TestAddManualProduct:
     ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
         engine._master_catalog = [
-            CatalogItem(product_id="old", drug_name="Old", source=SourceName.GIATHUOCTOT),
+            CatalogItem(
+                product_id="old", drug_name="Old", source=SourceName.GIATHUOCTOT
+            ),
         ]
 
         import crawlers.engine as engine_mod
+
         monkeypatch.setattr(
-            engine_mod, "append_manual_product",
+            engine_mod,
+            "append_manual_product",
             lambda items, canonical_name, path=None: "MP2",
         )
 
@@ -626,24 +738,68 @@ class TestAddManualProduct:
         assert engine._master_catalog[-1].product_id == "new-item"
         engine.close()
 
-    def test_does_not_extend_catalog_when_not_yet_warmed(
+    def test_name_check_warms_and_extends_catalog(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
         assert engine._master_catalog is None
 
         import crawlers.engine as engine_mod
+
+        monkeypatch.setattr(engine_mod, "load_master_catalog", lambda **_kw: [])
         monkeypatch.setattr(
-            engine_mod, "append_manual_product",
+            engine_mod,
+            "append_manual_product",
             lambda items, canonical_name, path=None: "MP2",
         )
 
         engine.add_manual_product(
             {"giathuoctot": "https://www.giathuoctot.com/product/new-item"}, "New"
         )
-        assert engine._master_catalog is None
+        assert engine._master_catalog is not None
+        assert [item.product_id for item in engine._master_catalog] == ["new-item"]
+        engine.close()
+
+    def test_rejects_duplicate_name_case_accent_and_whitespace_insensitive(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = tmp_path / "accounts.yaml"
+        _write_config(cfg)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
+        engine._master_catalog = [
+            CatalogItem(
+                product_id="old",
+                drug_name="Thuốc   Bổ Gan",
+                source=SourceName.GIATHUOCTOT,
+                master_product_id="MP1",
+            )
+        ]
+        called = False
+
+        def fake_append(*_args, **_kwargs):
+            nonlocal called
+            called = True
+            return "MP2"
+
+        import crawlers.engine as engine_mod
+        from crawlers.engine import DuplicateProductNameError
+
+        monkeypatch.setattr(engine_mod, "append_manual_product", fake_append)
+
+        with pytest.raises(DuplicateProductNameError, match="đã tồn tại"):
+            engine.add_manual_product(
+                {"giathuoctot": "https://www.giathuoctot.com/product/new-item"},
+                "  THUOC bo  gan ",
+            )
+
+        assert called is False
+        assert len(engine._master_catalog) == 1
         engine.close()
 
 
@@ -653,10 +809,16 @@ class TestSetManualListing:
     ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
         engine._master_catalog = [
-            CatalogItem(product_id="old", drug_name="Boganic", source=SourceName.GIATHUOCTOT,
-                        master_product_id="MP1"),
+            CatalogItem(
+                product_id="old",
+                drug_name="Boganic",
+                source=SourceName.GIATHUOCTOT,
+                master_product_id="MP1",
+            ),
         ]
 
         saved = {}
@@ -666,6 +828,7 @@ class TestSetManualListing:
             saved["item"] = item
 
         import crawlers.engine as engine_mod
+
         monkeypatch.setattr(engine_mod, "append_or_update_listing", fake_append)
 
         result = engine.set_manual_listing(
@@ -684,7 +847,9 @@ class TestSetManualListing:
     ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
 
         called = False
 
@@ -693,9 +858,12 @@ class TestSetManualListing:
             called = True
 
         import crawlers.engine as engine_mod
+
         monkeypatch.setattr(engine_mod, "append_or_update_listing", fake_append)
 
-        result = engine.set_manual_listing("MP1", "chothuoc247", "https://khong-hop-le.com", "X")
+        result = engine.set_manual_listing(
+            "MP1", "chothuoc247", "https://khong-hop-le.com", "X"
+        )
         assert result is None
         assert called is False
         engine.close()
@@ -707,30 +875,268 @@ class TestSetManualListing:
         source) phải bị thay bằng item mới, không giữ cả 2 (trùng site)."""
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
         engine._master_catalog = [
-            CatalogItem(product_id="old-id", drug_name="Boganic", source=SourceName.GIATHUOCTOT,
-                        master_product_id="MP1"),
+            CatalogItem(
+                product_id="old-id",
+                drug_name="Boganic",
+                source=SourceName.GIATHUOCTOT,
+                master_product_id="MP1",
+            ),
         ]
 
         import crawlers.engine as engine_mod
+
         monkeypatch.setattr(
-            engine_mod, "append_or_update_listing", lambda *a, **kw: None,
+            engine_mod,
+            "append_or_update_listing",
+            lambda *a, **kw: None,
         )
 
         engine.set_manual_listing(
-            "MP1", "giathuoctot", "https://www.giathuoctot.com/product/new-slug", "Boganic"
+            "MP1",
+            "giathuoctot",
+            "https://www.giathuoctot.com/product/new-slug",
+            "Boganic",
         )
         assert len(engine._master_catalog) == 1
         assert engine._master_catalog[0].product_id == "new-slug"
         engine.close()
 
+
+class TestRenameProduct:
+    def test_writes_file_and_updates_all_items_same_master(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = tmp_path / "accounts.yaml"
+        _write_config(cfg)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
+        engine._master_catalog = [
+            CatalogItem(
+                product_id="p1",
+                drug_name="Boganic",
+                source=SourceName.GIATHUOCTOT,
+                master_product_id="MP1",
+            ),
+            CatalogItem(
+                product_id="p2",
+                drug_name="Boganic",
+                source=SourceName.CHOTHUOC247,
+                master_product_id="MP1",
+            ),
+            CatalogItem(
+                product_id="p3",
+                drug_name="Panadol",
+                source=SourceName.GIATHUOCTOT,
+                master_product_id="MP2",
+            ),
+        ]
+
+        saved = {}
+
+        def fake_rename(master_id, new_name, path=None):
+            saved["master_id"] = master_id
+            saved["new_name"] = new_name
+
+        import crawlers.engine as engine_mod
+
+        monkeypatch.setattr(engine_mod, "rename_master_product", fake_rename)
+
+        engine.rename_product("MP1", "Boganic Forte")
+
+        assert saved == {"master_id": "MP1", "new_name": "Boganic Forte"}
+        by_id = {it.product_id: it for it in engine._master_catalog}
+        assert by_id["p1"].drug_name == "Boganic Forte"
+        assert by_id["p1"].search_name == "boganic forte"
+        assert by_id["p2"].drug_name == "Boganic Forte"
+        assert by_id["p3"].drug_name == "Panadol"  # sản phẩm khác master không đổi
+        engine.close()
+
+    def test_noop_when_catalog_not_warmed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = tmp_path / "accounts.yaml"
+        _write_config(cfg)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
+        assert engine._master_catalog is None
+
+        import crawlers.engine as engine_mod
+
+        monkeypatch.setattr(engine_mod, "rename_master_product", lambda *a, **kw: None)
+
+        engine.rename_product("MP1", "Tên mới")  # không raise dù catalog chưa nạp
+        assert engine._master_catalog is None
+        engine.close()
+
+
+class TestRemoveListing:
+    def test_writes_file_and_prunes_only_matching_item(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = tmp_path / "accounts.yaml"
+        _write_config(cfg)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
+        engine._master_catalog = [
+            CatalogItem(
+                product_id="p1",
+                drug_name="Boganic",
+                source=SourceName.GIATHUOCTOT,
+                master_product_id="MP1",
+            ),
+            CatalogItem(
+                product_id="p2",
+                drug_name="Boganic",
+                source=SourceName.CHOTHUOC247,
+                master_product_id="MP1",
+            ),
+            CatalogItem(
+                product_id="p3",
+                drug_name="Panadol",
+                source=SourceName.GIATHUOCTOT,
+                master_product_id="MP2",
+            ),
+        ]
+
+        saved = {}
+
+        def fake_delete(master_id, source, path=None):
+            saved["master_id"] = master_id
+            saved["source"] = source
+            return 1
+
+        import crawlers.engine as engine_mod
+
+        monkeypatch.setattr(engine_mod, "delete_listing", fake_delete)
+
+        remaining = engine.remove_listing("MP1", SourceName.GIATHUOCTOT)
+
+        assert remaining == 1
+        assert saved == {"master_id": "MP1", "source": SourceName.GIATHUOCTOT}
+        assert {it.product_id for it in engine._master_catalog} == {"p2", "p3"}
+        engine.close()
+
+    def test_not_found_returns_none_and_does_not_prune(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = tmp_path / "accounts.yaml"
+        _write_config(cfg)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
+        engine._master_catalog = [
+            CatalogItem(
+                product_id="p1",
+                drug_name="Boganic",
+                source=SourceName.GIATHUOCTOT,
+                master_product_id="MP1",
+            ),
+        ]
+
+        import crawlers.engine as engine_mod
+
+        monkeypatch.setattr(engine_mod, "delete_listing", lambda *a, **kw: None)
+
+        result = engine.remove_listing("MP1", SourceName.CHOTHUOC247)
+
+        assert result is None
+        assert len(engine._master_catalog) == 1  # không mất gì
+        engine.close()
+
+
+class TestRemoveProduct:
+    def test_writes_file_and_prunes_every_item_of_that_master(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = tmp_path / "accounts.yaml"
+        _write_config(cfg)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
+        engine._master_catalog = [
+            CatalogItem(
+                product_id="p1",
+                drug_name="Boganic",
+                source=SourceName.GIATHUOCTOT,
+                master_product_id="MP1",
+            ),
+            CatalogItem(
+                product_id="p2",
+                drug_name="Boganic",
+                source=SourceName.CHOTHUOC247,
+                master_product_id="MP1",
+            ),
+            CatalogItem(
+                product_id="p3",
+                drug_name="Panadol",
+                source=SourceName.GIATHUOCTOT,
+                master_product_id="MP2",
+            ),
+        ]
+
+        saved = {}
+
+        def fake_delete_product(master_id, path=None):
+            saved["master_id"] = master_id
+            return 2
+
+        import crawlers.engine as engine_mod
+
+        monkeypatch.setattr(engine_mod, "delete_product", fake_delete_product)
+
+        removed = engine.remove_product("MP1")
+
+        assert removed == 2
+        assert saved == {"master_id": "MP1"}
+        # Cả 2 item cùng master MP1 (Giathuoctot + ChoThuoc247) đều bị dọn, MP2 giữ nguyên.
+        assert {it.product_id for it in engine._master_catalog} == {"p3"}
+        engine.close()
+
+    def test_not_found_returns_none_and_does_not_prune(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = tmp_path / "accounts.yaml"
+        _write_config(cfg)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
+        engine._master_catalog = [
+            CatalogItem(
+                product_id="p1",
+                drug_name="Boganic",
+                source=SourceName.GIATHUOCTOT,
+                master_product_id="MP1",
+            ),
+        ]
+
+        import crawlers.engine as engine_mod
+
+        monkeypatch.setattr(engine_mod, "delete_product", lambda *a, **kw: None)
+
+        result = engine.remove_product("MP_missing")
+
+        assert result is None
+        assert len(engine._master_catalog) == 1  # không mất gì
+        engine.close()
+
+
+class TestGetStarred:
     def test_get_starred_returns_watchlist(self, tmp_path: Path) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
 
         from utils.models import CatalogItem
+
         ci = CatalogItem(
             product_id="p1",
             drug_name="StarredDrug",
@@ -747,9 +1153,12 @@ class TestSetManualListing:
     def test_add_to_watchlist_passes_image_url(self, tmp_path: Path) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
 
         from utils.models import CatalogItem
+
         ci = CatalogItem(
             product_id="p1",
             drug_name="ImgDrug",
@@ -766,15 +1175,19 @@ class TestFetchLivePrices:
     """engine.fetch_live_prices — giá LIVE cho catalog item user vừa chọn (GUI
     search-select), không bao giờ đọc cache giá dài hạn."""
 
-    def test_supports_keyword_site_reruns_crawl_live(
+    def test_search_only_site_returns_price_error_without_name_search(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=True)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=True
+        )
         received: list[str] = []
 
         class _FakeCrawler:
+            direct_fetch_supported = False
+
             def __init__(self, *a, **kw):
                 pass
 
@@ -791,11 +1204,13 @@ class TestFetchLivePrices:
         from crawlers import engine as engine_mod
 
         monkeypatch.setitem(engine_mod.CRAWLER_REGISTRY, "giathuoctot", _FakeCrawler)
-        item = CatalogItem(product_id="", drug_name="Boganic hop", source=SourceName.GIATHUOCTOT)
+        item = CatalogItem(
+            product_id="p1", drug_name="Tên người dùng", source=SourceName.GIATHUOCTOT
+        )
         results = asyncio.run(engine.fetch_live_prices([item]))
 
-        assert received == ["Boganic hop"]  # search lại đúng tên, không phải cache
-        assert [r.drug_name for r in results] == ["Boganic hop"]
+        assert received == []
+        assert results == []
         engine.close()
 
     def test_unsupported_keyword_site_uses_fetch_price_by_id(
@@ -803,11 +1218,14 @@ class TestFetchLivePrices:
     ) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=True)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=True
+        )
         received_ids: list[str] = []
 
         class _FakeCrawler:
             keyword_search_supported = False
+            direct_fetch_supported = True
 
             def __init__(self, *a, **kw):
                 pass
@@ -820,12 +1238,19 @@ class TestFetchLivePrices:
 
             async def fetch_price_by_id(self, product_id):
                 received_ids.append(product_id)
-                return _dp("Almetamin", price=70000)
+                return DrugPrice(
+                    drug_name="Almetamin",
+                    price_vnd=70000,
+                    source=SourceName.GIATHUOCTOT,
+                    product_id=product_id,
+                )
 
         from crawlers import engine as engine_mod
 
         monkeypatch.setitem(engine_mod.CRAWLER_REGISTRY, "giathuoctot", _FakeCrawler)
-        item = CatalogItem(product_id="sku-1", drug_name="Almetamin", source=SourceName.GIATHUOCTOT)
+        item = CatalogItem(
+            product_id="sku-1", drug_name="Almetamin", source=SourceName.GIATHUOCTOT
+        )
         results = asyncio.run(engine.fetch_live_prices([item]))
 
         assert received_ids == ["sku-1"]
@@ -834,16 +1259,20 @@ class TestFetchLivePrices:
         assert engine.cache.get_history("Almetamin")[0]["price_vnd"] == 70000
         engine.close()
 
-    def test_matches_by_product_id_when_search_returns_multiple(
+    def test_search_results_are_never_used_as_product_identity(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Site fuzzy-match có thể trả nhiều kết quả cho 1 từ khóa — ưu tiên đúng
         product_id đã biết từ catalog thay vì giữ hết."""
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=True)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=True
+        )
 
         class _FakeCrawler:
+            direct_fetch_supported = False
+
             def __init__(self, *a, **kw):
                 pass
 
@@ -855,26 +1284,136 @@ class TestFetchLivePrices:
 
             async def crawl(self, keyword):
                 return [
-                    DrugPrice(drug_name="Boganic hop", price_vnd=1000,
-                              source=SourceName.GIATHUOCTOT, product_id="p1"),
-                    DrugPrice(drug_name="Bổ Gan Abipha", price_vnd=2000,
-                              source=SourceName.GIATHUOCTOT, product_id="p2"),
+                    DrugPrice(
+                        drug_name="Boganic hop",
+                        price_vnd=1000,
+                        source=SourceName.GIATHUOCTOT,
+                        product_id="p1",
+                    ),
+                    DrugPrice(
+                        drug_name="Bổ Gan Abipha",
+                        price_vnd=2000,
+                        source=SourceName.GIATHUOCTOT,
+                        product_id="p2",
+                    ),
                 ]
 
         from crawlers import engine as engine_mod
 
         monkeypatch.setitem(engine_mod.CRAWLER_REGISTRY, "giathuoctot", _FakeCrawler)
-        item = CatalogItem(product_id="p1", drug_name="Boganic hop", source=SourceName.GIATHUOCTOT)
+        item = CatalogItem(
+            product_id="p1", drug_name="Boganic hop", source=SourceName.GIATHUOCTOT
+        )
         results = asyncio.run(engine.fetch_live_prices([item]))
 
-        assert len(results) == 1
-        assert results[0].product_id == "p1"
+        assert results == []
+        engine.close()
+
+    def test_direct_id_capability_bypasses_name_search(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = tmp_path / "accounts.yaml"
+        _write_config(cfg)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
+        received_ids: list[str] = []
+
+        class _FakeCrawler:
+            direct_fetch_supported = True
+
+            def __init__(self, *a, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return None
+
+            async def crawl(self, _keyword):
+                raise AssertionError("không được search tên khi đã hỗ trợ fetch ID")
+
+            async def fetch_price_by_id(self, product_id):
+                received_ids.append(product_id)
+                return DrugPrice(
+                    drug_name="Alaxan hộp 10 vỉ x 10 viên",
+                    price_vnd=111000,
+                    source=SourceName.GIATHUOCTOT,
+                    product_id=product_id,
+                )
+
+        from crawlers import engine as engine_mod
+
+        monkeypatch.setitem(engine_mod.CRAWLER_REGISTRY, "giathuoctot", _FakeCrawler)
+        item = CatalogItem(
+            product_id="alaxan-10x10",
+            drug_name="Alaxan (10x10)",
+            source_drug_name="Alaxan hộp 10 vỉ x 10 viên",
+            source=SourceName.GIATHUOCTOT,
+        )
+
+        results = asyncio.run(engine.fetch_live_prices([item]))
+
+        assert received_ids == ["alaxan-10x10"]
+        assert [result.product_id for result in results] == ["alaxan-10x10"]
+        engine.close()
+
+    def test_search_only_does_not_use_even_listing_name(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cfg = tmp_path / "accounts.yaml"
+        _write_config(cfg)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
+        received_queries: list[str] = []
+
+        class _FakeCrawler:
+            direct_fetch_supported = False
+
+            def __init__(self, *a, **kw):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return None
+
+            async def crawl(self, keyword):
+                received_queries.append(keyword)
+                return [
+                    DrugPrice(
+                        drug_name="Alaxan 25 vỉ x 4 viên",
+                        price_vnd=117200,
+                        source=SourceName.GIATHUOCTOT,
+                        product_id="alaxan-25x4",
+                    )
+                ]
+
+        from crawlers import engine as engine_mod
+
+        monkeypatch.setitem(engine_mod.CRAWLER_REGISTRY, "giathuoctot", _FakeCrawler)
+        item = CatalogItem(
+            product_id="alaxan-10x10",
+            drug_name="Alaxan (10x10)",
+            source_drug_name="Alaxan hộp 10 vỉ x 10 viên",
+            source=SourceName.GIATHUOCTOT,
+        )
+
+        results = asyncio.run(engine.fetch_live_prices([item]))
+
+        assert received_queries == []
+        assert results == []
         engine.close()
 
     def test_unknown_site_skipped(self, tmp_path: Path) -> None:
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
         item = CatalogItem(product_id="p1", drug_name="X", source=SourceName.THUOCSI)
         results = asyncio.run(engine.fetch_live_prices([item]))
         assert results == []
@@ -883,20 +1422,23 @@ class TestFetchLivePrices:
     def test_multiple_items_same_site_share_one_login(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Bug thật đã xảy ra: 1 nhóm gộp nhiều CatalogItem của CÙNG 1 site
-        (sàn đa nhà cung cấp như thuocsi hay có vài SKU trùng cho cùng 1
-        thuốc). Trước đây mỗi item tự tạo crawler + login riêng — chạy song
+        """Nhiều sản phẩm khác nhau của CÙNG 1 site phải dùng chung crawler.
+        Trước đây mỗi item tự tạo crawler + login riêng — chạy song
         song thì bắn hàng chục login ĐỒNG THỜI vào cùng 1 site, khiến site
         tưởng bị tấn công và tự khoá IP (HTTP 403 "đăng nhập quá nhiều lần").
         Giờ phải gom theo site, chỉ login 1 lần rồi tái sử dụng cho mọi item
         cùng site."""
         cfg = tmp_path / "accounts.yaml"
         _write_config(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
         login_count = 0
         instance_count = 0
 
         class _FakeCrawler:
+            direct_fetch_supported = True
+
             def __init__(self, *a, **kw):
                 nonlocal instance_count
                 instance_count += 1
@@ -907,23 +1449,38 @@ class TestFetchLivePrices:
             async def __aexit__(self, *a):
                 return None
 
-            async def crawl(self, keyword):
+            async def fetch_price_by_id(self, product_id):
                 nonlocal login_count
-                login_count += 1  # giả lập: mỗi lần login thật sẽ tăng số này
-                return [_dp(keyword, price=1000)]
+                login_count += 1
+                return DrugPrice(
+                    drug_name=f"Sản phẩm {product_id}",
+                    price_vnd=1000,
+                    source=SourceName.GIATHUOCTOT,
+                    product_id=product_id,
+                )
 
         from crawlers import engine as engine_mod
 
         monkeypatch.setitem(engine_mod.CRAWLER_REGISTRY, "giathuoctot", _FakeCrawler)
         items = [
-            CatalogItem(product_id="p1", drug_name="Boganic A", source=SourceName.GIATHUOCTOT),
-            CatalogItem(product_id="p2", drug_name="Boganic B", source=SourceName.GIATHUOCTOT),
-            CatalogItem(product_id="p3", drug_name="Boganic C", source=SourceName.GIATHUOCTOT),
+            CatalogItem(
+                product_id="p1", drug_name="Boganic A", source=SourceName.GIATHUOCTOT
+            ),
+            CatalogItem(
+                product_id="p2", drug_name="Boganic B", source=SourceName.GIATHUOCTOT
+            ),
+            CatalogItem(
+                product_id="p3", drug_name="Boganic C", source=SourceName.GIATHUOCTOT
+            ),
         ]
         results = asyncio.run(engine.fetch_live_prices(items))
 
-        assert instance_count == 1, "chỉ được tạo 1 crawler instance (1 login) cho cả site, không phải 1/item"
-        assert login_count == 3, "vẫn phải search đủ 3 lần (3 tên khác nhau), chỉ login chung 1 lần"
+        assert instance_count == 1, (
+            "chỉ được tạo 1 crawler instance (1 login) cho cả site, không phải 1/item"
+        )
+        assert login_count == 3, (
+            "vẫn phải fetch đủ 3 ID khác nhau, chỉ dùng chung một crawler"
+        )
         assert len(results) == 3
         engine.close()
 
@@ -967,14 +1524,18 @@ sites:
 
             async def ensure_auth(self, *, force_real_login: bool = False):
                 if self._cfg.id not in ok_sites:
-                    raise RuntimeError(f"{self._cfg.name}: Thông tin đăng nhập không hợp lệ.")
+                    raise RuntimeError(
+                        f"{self._cfg.name}: Thông tin đăng nhập không hợp lệ."
+                    )
 
         return _FakeCrawler
 
     def test_all_ok(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         cfg = tmp_path / "accounts.yaml"
         self._cfg_two_enabled(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
         from crawlers import engine as engine_mod
 
         fake = self._fake({"giathuoctot", "thuocsisaigon"})
@@ -985,10 +1546,14 @@ sites:
         assert all(r.ok and r.error == "" for r in results)
         engine.close()
 
-    def test_one_fails_others_ok(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_one_fails_others_ok(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         cfg = tmp_path / "accounts.yaml"
         self._cfg_two_enabled(cfg)
-        engine = CrawlerEngine(config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False)
+        engine = CrawlerEngine(
+            config_path=cfg, cache_db=tmp_path / "c.db", use_cache=False
+        )
         from crawlers import engine as engine_mod
 
         fake = self._fake({"giathuoctot"})  # thuocsisaigon fail

@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import TypeVar
 
-from utils.models import CatalogItem, DrugPrice, SourceName, WatchlistItem
+from utils.models import CatalogItem, DrugPrice, SourceName, StockStatus, WatchlistItem
 from utils.normalizer import group_names, load_aliases
 
 type SiteDescriptor = dict[str, str | SourceName]
@@ -36,12 +36,16 @@ def _relabel_by_longest_variant(
     sang biến thể dài nhất (xem `_longest`) để không mất dấu tiếng Việt."""
     alias_targets: set[str] = set(aliases.values()) if aliases else set()
     return {
-        (key if key in alias_targets else _longest([name_of(v) for v in variants])): variants
+        (
+            key if key in alias_targets else _longest([name_of(v) for v in variants])
+        ): variants
         for key, variants in groups.items()
     }
 
 
-def build_groups(names: list[str], aliases: dict[str, str] | None = None) -> dict[str, list[str]]:
+def build_groups(
+    names: list[str], aliases: dict[str, str] | None = None
+) -> dict[str, list[str]]:
     """Gom tên biến thể trong cache về {tên hiển thị: [tên gốc...]}.
 
     Alias tay (name_aliases.yaml) thắng kết quả gom tự động: biến thể có alias
@@ -68,7 +72,7 @@ def build_catalog_groups(
     items: list[CatalogItem], aliases: dict[str, str] | None = None
 ) -> dict[str, list[CatalogItem]]:
     """Gom CatalogItem theo `master_product_id` — nhóm đã được entity-resolution
-    (catalog_master_entity_resolved.xlsx) duyệt sẵn, KHÔNG fuzzy-match lại như
+    (catalog_master.xlsx) duyệt sẵn, KHÔNG fuzzy-match lại như
     `build_groups`. Mọi item cùng nhóm đã mang sẵn cùng 1 `drug_name` (tên chuẩn) từ
     `utils.catalog_master.load_master_catalog` nên chỉ cần group-by trực tiếp; alias
     tay (name_aliases.yaml) vẫn được áp lên trên để đổi tên hiển thị nếu cần.
@@ -86,7 +90,11 @@ def build_catalog_groups(
     groups: dict[str, list[CatalogItem]] = {}
     for variants in by_key.values():
         canonical_name = variants[0].drug_name
-        name = aliases.get(canonical_name.strip().lower(), canonical_name) if aliases else canonical_name
+        name = (
+            aliases.get(canonical_name.strip().lower(), canonical_name)
+            if aliases
+            else canonical_name
+        )
         groups.setdefault(name, []).extend(variants)
     return groups
 
@@ -121,8 +129,11 @@ def format_prices(records: list[DrugPrice]) -> str:
     parts: list[str] = []
     for p in records:
         src = _source_of(p)
-        price = p.price_display or (f"{p.price_vnd:,}đ" if p.price_vnd else "")
-        label = f"{src}: {price}" if price else src
+        if p.stock_status == StockStatus.OUT_OF_STOCK:
+            label = f"{src}: hết hàng"
+        else:
+            price = p.price_display or (f"{p.price_vnd:,}đ" if p.price_vnd else "")
+            label = f"{src}: {price}" if price else src
         if best is not None and p is best:
             label = f"★{label}"
         parts.append(label)
@@ -141,15 +152,21 @@ def _site_status(
     nhà SX/thời gian/link nên cần cả record gốc, không chỉ nhãn). Trả lời câu
     'sao thuốc này chỉ có 2 nguồn, các site khác thì sao':
     - Site trả về giá live → hiển thị giá (★ = rẻ nhất).
-    - Site có trong catalog (từng thấy sản phẩm này) nhưng live-fetch không ra
-      giá → 'lỗi giá' (site đang lỗi/hết hàng tạm thời).
+    - Site trả tín hiệu hết tồn kho rõ ràng → 'hết hàng'.
+    - Site có trong catalog nhưng live-fetch không trả record → 'lỗi giá'.
     - Site KHÔNG có trong catalog (nhóm sản phẩm này, theo entity-resolution,
       không có listing ở site đó) → 'không có SP' (site thật sự không bán thuốc
-      này, hoặc catalog_master_entity_resolved.xlsx chưa cập nhật listing mới).
+      này, hoặc catalog_master.xlsx chưa cập nhật listing mới).
     """
     source_value = site["source"]
-    source = source_value if isinstance(source_value, SourceName) else SourceName(source_value)
+    source = (
+        source_value
+        if isinstance(source_value, SourceName)
+        else SourceName(source_value)
+    )
     rec = by_source.get(source)
+    if rec is not None and rec.stock_status == StockStatus.OUT_OF_STOCK:
+        return "hết hàng", rec
     if rec is not None and rec.price_vnd > 0:
         price = rec.price_display or f"{rec.price_vnd:,}đ"
         label = f"★{price}" if best is not None and rec is best else price
@@ -186,32 +203,58 @@ def product_detail_rows(
     items: list[CatalogItem],
     records: list[DrugPrice],
 ) -> list[ProductDetailRow]:
-    """1 dict/site cho bảng chi tiết sản phẩm (bấm chuột phải vào dòng 'Đã
-    chọn') — như `price_cells_by_source` nhưng giàu thông tin hơn (nhà sản
-    xuất, thời gian cập nhật, link sản phẩm) thay vì chỉ 1 nhãn ngắn cho cột
-    Treeview. Field rỗng hiện '—'."""
+    """1 dict/site cho bảng chi tiết sản phẩm (chuột phải/nhấp đúp 'Đã chọn',
+    hoặc 'Sửa' ở bảng tìm thuốc) — như `price_cells_by_source` nhưng tách
+    riêng `price` (giá, "—" nếu chưa có) khỏi `status` ("Tốt" khi có giá thật,
+    còn lại dùng chung nhãn với `price_cells_by_source` — "giá ẩn"/"lỗi
+    giá"/"không có SP", xem `_site_status`).
+
+    `url` LUÔN lấy từ catalog (`CatalogItem.source_url`) — link vào trang sản
+    phẩm có sẵn ngay từ catalog, không phụ thuộc crawl giá đã thành công hay
+    chưa (khác trước đây lấy từ `DrugPrice.source_url`, chỉ có sau khi
+    live-fetch ra giá). Field rỗng hiện '—'.
+
+    `records` RỖNG HOÀN TOÀN (chưa crawl lần nào — vd mở từ bảng TÌM thuốc,
+    hoặc sản phẩm 'Đã chọn' còn đang crawl dở) → nhãn 'lỗi giá' của
+    `_site_status` bị đổi thành 'chưa update' (đúng bản chất: CHƯA THỬ, không
+    phải THỬ RỒI LỖI). Có ít nhất 1 record (crawl đã chạy, dù site khác có thể
+    vẫn lỗi) → giữ nguyên 'lỗi giá' như cũ."""
     catalog_sources = {it.source for it in items}
     by_source: dict[SourceName, DrugPrice] = {}
     for r in records:
         _ = by_source.setdefault(r.source, r)
     best = cheapest(records)
+    never_crawled = not records
+    url_by_source: dict[SourceName, str] = {}
+    for it in items:
+        url_by_source.setdefault(it.source, it.source_url)
 
     rows: list[ProductDetailRow] = []
     for site in sites:
-        status, rec = _site_status(site, catalog_sources, by_source, best)
-        if rec is not None:
-            manufacturer = rec.manufacturer or "—"
-            updated = rec.crawled_at.strftime("%H:%M %d/%m/%Y") if rec.crawled_at else "—"
-            url = rec.source_url or "—"
-        else:
-            manufacturer = updated = url = "—"
-        rows.append({
-            "site": site["name"],
-            "status": status,
-            "manufacturer": manufacturer,
-            "updated": updated,
-            "url": url,
-        })
+        source_value = site["source"]
+        source = (
+            source_value
+            if isinstance(source_value, SourceName)
+            else SourceName(source_value)
+        )
+        label, rec = _site_status(site, catalog_sources, by_source, best)
+        if never_crawled and label == "lỗi giá":
+            label = "chưa update"
+        is_ok = rec is not None and rec.price_vnd > 0
+        updated = (
+            rec.crawled_at.strftime("%H:%M %d/%m/%Y")
+            if rec is not None and rec.crawled_at
+            else "—"
+        )
+        rows.append(
+            {
+                "site": site["name"],
+                "price": label if is_ok else "—",
+                "status": "Tốt" if is_ok else label,
+                "updated": updated,
+                "url": url_by_source.get(source) or "—",
+            }
+        )
     return rows
 
 
@@ -250,14 +293,18 @@ def format_watchlist(items: list[WatchlistItem]) -> list[dict[str, str]]:
             status = "stale"
         else:
             status = "fresh"
-        out.append({
-            "drug_name": item.drug_name,
-            "source": item.source.value if hasattr(item.source, "value") else str(item.source),
-            "price": price_str,
-            "last_checked": ts,
-            "status": status,
-            "image_url": item.image_url,
-        })
+        out.append(
+            {
+                "drug_name": item.drug_name,
+                "source": item.source.value
+                if hasattr(item.source, "value")
+                else str(item.source),
+                "price": price_str,
+                "last_checked": ts,
+                "status": status,
+                "image_url": item.image_url,
+            }
+        )
     return out
 
 

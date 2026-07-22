@@ -13,6 +13,7 @@ from selectolax.parser import HTMLParser
 
 from utils.models import DrugPrice, SourceName
 from utils.price_parser import format_price, parse_price
+from utils.stock_status import detect_stock_status
 
 from ..base import AuthError, BaseCrawler
 
@@ -30,6 +31,7 @@ def _extract_csrf(html: str) -> str:
 
 class ChoThuoc247Crawler(BaseCrawler):
     source_name = SourceName.CHOTHUOC247
+    direct_fetch_supported = True
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -112,8 +114,40 @@ class ChoThuoc247Crawler(BaseCrawler):
             strength=raw.get("web_volume", ""),
             price_vnd=price,
             price_display=format_price(price),
+            stock_status=detect_stock_status(raw),
             source=self.source_name,
             source_url=f"{BASE}/san-pham/{pid}" if pid else BASE,
             product_id=str(pid),
             image_url=image_url,
+        )
+
+    async def fetch_price_by_id(self, product_id: str) -> DrugPrice | None:
+        """Lấy đúng trang chi tiết ``/san-pham/{id}.html`` đã lưu trong catalog."""
+        if not product_id:
+            return None
+        await self.ensure_auth()
+        url = f"{BASE}/san-pham/{product_id}.html"
+        resp = await self.request_with_retry("GET", url)
+        if resp.status_code != 200:
+            return None
+        tree = HTMLParser(resp.text)
+        name_node = tree.css_first(".product-title") or tree.css_first("h1")
+        price_node = tree.css_first(".price")
+        out_node = tree.css_first(".out-of-stock")
+        stock_node = out_node or tree.css_first(".stock") or tree.css_first(".availability")
+        name = name_node.text(strip=True) if name_node else ""
+        if not name:
+            return None
+        price = parse_price(price_node.text(strip=True) if price_node else "")
+        stock_text = (
+            "out_of_stock" if out_node is not None else stock_node.text(strip=True) if stock_node else ""
+        )
+        return DrugPrice(
+            drug_name=name,
+            price_vnd=price,
+            price_display=format_price(price),
+            stock_status=detect_stock_status(text=stock_text),
+            source=self.source_name,
+            source_url=url,
+            product_id=str(product_id),
         )

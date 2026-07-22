@@ -26,6 +26,14 @@ class SourceName(str, Enum):
     BACHHOATHUOC = "BachHoaThuoc"
 
 
+class StockStatus(str, Enum):
+    """Trạng thái tồn kho tách biệt với việc có/không có giá."""
+
+    UNKNOWN = "unknown"
+    IN_STOCK = "in_stock"
+    OUT_OF_STOCK = "out_of_stock"
+
+
 class DrugPrice(BaseModel):
     """Một bản ghi giá thuốc đã chuẩn hoá từ bất kỳ nguồn nào."""
 
@@ -37,6 +45,7 @@ class DrugPrice(BaseModel):
     strength: str = ""
     price_vnd: int = 0          # 25000 — dùng int (VND không có phần thập phân)
     price_display: str = ""     # "25.000đ"
+    stock_status: StockStatus = StockStatus.UNKNOWN
     source: SourceName
     source_url: str = ""
     product_id: str = ""        # ID nội bộ nguồn (slug/id/url) — match watchlist, KHÔNG vào CSV
@@ -63,6 +72,7 @@ CSV_HEADERS: list[str] = [
     "strength",
     "price_vnd",
     "price_display",
+    "stock_status",
     "source",
     "source_url",
     "crawled_at",
@@ -143,15 +153,17 @@ class CatalogItem(BaseModel):
     product_id: str
     drug_name: str
     search_name: str = ""   # strip_accents(drug_name).lower() — cho matching không dấu
+    source_drug_name: str = ""  # tên listing gốc tại site — chỉ dùng làm search hint
     manufacturer: str = ""
     source: SourceName
     source_url: str = ""
     image_url: str = ""
     cached_at: datetime = Field(default_factory=datetime.now)
-    master_product_id: str = ""  # id nhóm entity-resolution (catalog_master_entity_resolved.xlsx)
+    master_product_id: str = ""  # id nhóm entity-resolution (catalog_master.xlsx)
 
     @field_validator(
-        "drug_name", "manufacturer", "source_url", "search_name", "image_url", "master_product_id",
+        "drug_name", "manufacturer", "source_url", "search_name", "source_drug_name",
+        "image_url", "master_product_id",
         mode="before",
     )
     @classmethod
