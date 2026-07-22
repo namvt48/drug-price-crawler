@@ -72,7 +72,19 @@ class GiathuoctotCrawler(BaseCrawler):
     def _parse_product(self, raw: dict) -> DrugPrice | None:
         # pricingTablePrice là giá sỉ theo bảng giá của tài khoản đăng nhập;
         # basePrice là giá niêm yết. App so sánh giá B2B nên ưu tiên giá bảng.
-        price = parse_price(raw.get("pricingTablePrice") or raw.get("basePrice") or 0)
+        raw_price = raw.get("pricingTablePrice") or raw.get("basePrice") or 0
+        if not parse_price(raw_price):
+            # Khi sản phẩm hết hàng, API có thể đưa cả giá chính về 0 nhưng vẫn
+            # giữ giá gần nhất theo bảng của tài khoản trong ``tieredPrices``.
+            # Chỉ lấy một giá dương thật; tuyệt đối không tự đoán nếu list rỗng.
+            for tier in raw.get("tieredPrices") or []:
+                if not isinstance(tier, dict):
+                    continue
+                tier_price = parse_price(tier.get("price") or 0)
+                if tier_price > 0:
+                    raw_price = tier_price
+                    break
+        price = parse_price(raw_price)
         manufacturer = (raw.get("manufacturer") or {}).get("name", "")
         slug = raw.get("slug", "")
         image_urls = raw.get("imageUrls") or []

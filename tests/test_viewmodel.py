@@ -154,6 +154,19 @@ class TestCheapest:
         assert vm.cheapest([_dp("A", price=0)]) is None
         assert vm.cheapest([]) is None
 
+    def test_out_of_stock_price_is_not_eligible_for_cheapest(self) -> None:
+        unavailable = DrugPrice(
+            drug_name="A",
+            source=SourceName.THUOCTOT3MIEN,
+            price_vnd=1000,
+            price_display="1.000đ",
+            stock_status="out_of_stock",
+        )
+        available = _dp("A", SourceName.GIATHUOCTOT, 2000, "2.000đ")
+
+        assert vm.cheapest([unavailable, available]) is available
+        assert vm.cheapest([unavailable]) is None
+
 
 class TestFormatPrices:
     def test_star_marks_cheapest(self) -> None:
@@ -173,6 +186,17 @@ class TestFormatPrices:
     def test_hidden_price_shows_source_only(self) -> None:
         s = vm.format_prices([_dp("A", price=0)])
         assert s == "Giathuoctot"
+
+    def test_out_of_stock_keeps_reference_price_without_best_marker(self) -> None:
+        record = DrugPrice(
+            drug_name="Alaxan",
+            source=SourceName.THUOCTOT3MIEN,
+            price_vnd=109900,
+            price_display="109.900đ",
+            stock_status="out_of_stock",
+        )
+
+        assert vm.format_prices([record]) == "ThuocTot3Mien: hết hàng · 109.900đ"
 
 
 def _site(name: str, source: SourceName) -> vm.SiteDescriptor:
@@ -229,11 +253,29 @@ class TestPriceCellsBySource:
                 drug_name="Colchicin",
                 source=SourceName.THUOCTOT3MIEN,
                 price_vnd=0,
+                price_display="0đ",
                 stock_status="out_of_stock",
             )
         ]
 
         assert vm.price_cells_by_source(sites, items, records) == ["× Hết hàng"]
+
+    def test_out_of_stock_keeps_price_in_main_table(self) -> None:
+        sites = [_site("ThuocTot3Mien", SourceName.THUOCTOT3MIEN)]
+        items = [_ci("Alaxan", source=SourceName.THUOCTOT3MIEN)]
+        records = [
+            DrugPrice(
+                drug_name="Alaxan",
+                source=SourceName.THUOCTOT3MIEN,
+                price_vnd=109900,
+                price_display="109.900đ",
+                stock_status="out_of_stock",
+            )
+        ]
+
+        assert vm.price_cells_by_source(sites, items, records) == [
+            "× Hết hàng · 109.900đ"
+        ]
 
     def test_empty_sites(self) -> None:
         assert vm.price_cells_by_source([], [], []) == []
@@ -246,7 +288,7 @@ class TestStatusPresentation:
             "2.000đ": ("Giá · 2.000đ", "price"),
             "lỗi giá": ("! Lỗi giá", "error"),
             "không có SP": ("— Không có SP", "missing"),
-            "hết hàng": ("× Hết hàng", "out"),
+            "hết hàng · 109.900đ": ("× Hết hàng · 109.900đ", "out"),
         }
 
         for raw, (display, kind) in cases.items():
@@ -370,6 +412,30 @@ class TestProductDetailRows:
         row = vm.product_detail_rows(sites, items, records)[0]
 
         assert row["price"] == "—"
+        assert row["status"] == "Hết hàng"
+
+    def test_out_of_stock_price_remains_visible_in_detail(self) -> None:
+        sites = [_site("ThuocTot3Mien", SourceName.THUOCTOT3MIEN)]
+        items = [
+            _ci(
+                "Alaxan",
+                source=SourceName.THUOCTOT3MIEN,
+                source_url="https://thuoctot3mien.vn/alaxan-p113.html",
+            )
+        ]
+        records = [
+            DrugPrice(
+                drug_name="Alaxan",
+                source=SourceName.THUOCTOT3MIEN,
+                price_vnd=109900,
+                price_display="109.900đ",
+                stock_status="out_of_stock",
+            )
+        ]
+
+        row = vm.product_detail_rows(sites, items, records)[0]
+
+        assert row["price"] == "109.900đ"
         assert row["status"] == "Hết hàng"
 
     def test_detail_splits_numeric_price_from_explicit_status(self) -> None:

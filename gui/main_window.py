@@ -548,7 +548,9 @@ class MainWindow(tk.Tk):
         self._tree.column("cheapest", width=155, anchor="w")
         for sid, _source, display_name in site_order:
             self._tree.heading(sid, text=display_name)
-            self._tree.column(sid, width=135, anchor="center")
+            # Đủ chỗ cho trạng thái dài nhất: "× Hết hàng · 109.900đ".
+            # Bảng đã có thanh cuộn ngang nên ưu tiên không cắt mất giá.
+            self._tree.column(sid, width=165, anchor="center")
         self._tree.bind("<Button-3>", self._on_tree_right_click)
         # Nhấp đúp cũng mở bảng chi tiết (giống chuột phải) — bảng chi tiết có
         # sẵn nút sửa/xóa từng site (nhấp đúp dòng site trong đó, xem
@@ -2215,7 +2217,12 @@ class MainWindow(tk.Tk):
                                 rec is not None
                                 and rec.stock_status == StockStatus.OUT_OF_STOCK
                             ):
-                                price, status = "—", "Hết hàng"
+                                price = (
+                                    rec.price_display or f"{rec.price_vnd:,}đ"
+                                    if rec.price_vnd > 0
+                                    else "—"
+                                )
+                                status = "Hết hàng"
                             elif rec is not None and rec.price_vnd > 0:
                                 price = rec.price_display or f"{rec.price_vnd:,}đ"
                                 status = (

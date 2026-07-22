@@ -12,7 +12,7 @@ import httpx
 import pytest
 
 from crawlers.base import AuthError
-from utils.models import SiteConfig, SourceName
+from utils.models import SiteConfig, SourceName, StockStatus
 
 
 async def _noop(*_args: object, **_kwargs: object) -> None:
@@ -174,6 +174,37 @@ class TestGiathuoctot:
         dp = c._parse_product({"name": "X", "pricingTablePrice": 5000, "slug": "s"})
         assert dp is not None
         assert dp.price_vnd == 5000
+
+    def test_out_of_stock_uses_positive_tiered_price_as_reference(self) -> None:
+        """Payload thật có thể xóa giá chính khi hết hàng nhưng vẫn giữ giá
+        theo bảng của tài khoản trong ``tieredPrices``."""
+        from crawlers.b2b.giathuoctot import GiathuoctotCrawler
+
+        c = GiathuoctotCrawler(_cfg("giathuoctot"))
+        dp = c._parse_product(
+            {
+                "name": "Cảm xuyên hương bột tắm",
+                "slug": "cam-xuyen-huong",
+                "currentPrice": 0,
+                "basePrice": 0,
+                "pricingTablePrice": 0,
+                "quantityAvailable": 0,
+                "stockStatus": 0,
+                "tieredPrices": [
+                    {
+                        "price": 61200,
+                        "availableQuantity": 0,
+                        "pricingTableRegion": "HN",
+                    }
+                ],
+                "hasPrice": False,
+            }
+        )
+
+        assert dp is not None
+        assert dp.price_vnd == 61200
+        assert dp.price_display == "61.200đ"
+        assert dp.stock_status == StockStatus.OUT_OF_STOCK
 
     def test_fetch_price_by_id_uses_slug_detail_and_member_price(self) -> None:
         from crawlers.b2b.giathuoctot import GiathuoctotCrawler

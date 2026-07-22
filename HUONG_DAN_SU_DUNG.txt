@@ -147,9 +147,11 @@ Bảng "Đã chọn" gồm:
   - "Giá · 115.000đ" (màu trung tính): lấy được đúng sản phẩm và có giá
     hợp lệ, nhưng không phải giá thấp nhất.
 
-  - "× Hết hàng" (màu cam): website đã trả tín hiệu tồn kho rõ ràng, ví dụ
-    out_of_stock, sold out, available=false hoặc số lượng tồn bằng 0.
-    Sản phẩm hết hàng không được tính vào cột "Rẻ nhất ★".
+  - "× Hết hàng · 109.900đ" (màu cam): website đã trả tín hiệu tồn kho rõ
+    ràng, ví dụ out_of_stock, sold out, available=false hoặc số lượng tồn
+    bằng 0. Nếu website vẫn trả giá, ứng dụng giữ giá đó để tham khảo; nếu
+    không có giá thì chỉ hiện "× Hết hàng". Sản phẩm hết hàng không được tính
+    vào cột "Rẻ nhất ★" dù vẫn có giá.
 
   - "! Giá ẩn" (màu vàng): đã lấy được đúng sản phẩm nhưng website không cung cấp giá
     hợp lệ và cũng không xác nhận hết hàng. Giá bằng 0 một mình không đủ để
@@ -166,9 +168,10 @@ Bảng "Đã chọn" gồm:
 
 Mỗi ô giá trong bảng "Đã chọn" được tô nền trực tiếp theo trạng thái; legend
 5 màu nằm ngay phía trên để đối chiếu. Trong cửa sổ chi tiết, cả dòng của từng
-website được tô theo cùng hệ màu. Giá thật dùng chữ đậm; "Không có SP" nhỏ và
-nhẹ hơn để không lấn át dữ liệu giá. Trạng thái vẫn luôn có chữ rõ ràng nên
-không cần dựa riêng vào màu để phân biệt.
+website được tô theo cùng hệ màu. Dòng hết hàng vẫn giữ giá trong cột "Giá"
+nhưng có trạng thái và nền màu cam. Giá thật dùng chữ đậm; "Không có SP" nhỏ
+và nhẹ hơn để không lấn át dữ liệu giá. Trạng thái vẫn luôn có chữ rõ ràng
+nên không cần dựa riêng vào màu để phân biệt.
 
 Ứng dụng chỉ hiển thị "hết hàng" khi website cung cấp bằng chứng rõ ràng.
 Nếu website không công bố trạng thái tồn kho, ứng dụng giữ "giá ẩn" hoặc
@@ -336,9 +339,11 @@ Hỏi: "Hết hàng", "giá ẩn" và "lỗi giá" khác nhau thế nào?
 Đáp: "Hết hàng" là website đã xác nhận không còn tồn kho. "Giá ẩn" là
      đúng sản phẩm nhưng chưa có giá và chưa đủ bằng chứng hết hàng.
      "Lỗi giá" là app không lấy được record của đúng ID/link.
+     Nếu sản phẩm hết hàng vẫn có giá, app tiếp tục hiện giá bằng màu cam để
+     tham khảo nhưng không dùng giá đó để chọn "Rẻ nhất ★".
 
 Hỏi: Sản phẩm hết hàng có được tính là rẻ nhất không?
-Đáp: Không. Chỉ các record có giá dương hợp lệ mới được so sánh.
+Đáp: Không. Chỉ các record có giá dương và còn hàng mới được so sánh.
 
 Hỏi: Có thể đổi tên sau khi thêm không?
 Đáp: Có. Đổi tên không làm thay đổi ID/link đã lưu.

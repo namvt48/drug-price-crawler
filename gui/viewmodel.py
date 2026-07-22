@@ -112,8 +112,16 @@ def suggest(groups: dict[str, list[str]], query: str, limit: int = 30) -> list[s
 
 
 def cheapest(records: list[DrugPrice]) -> DrugPrice | None:
-    """Bản ghi giá thấp nhất (bỏ qua giá 0 = giá ẩn/chưa đăng nhập)."""
-    priced = [p for p in records if p.price_vnd > 0]
+    """Bản ghi đang bán có giá thấp nhất.
+
+    Giá của sản phẩm hết hàng vẫn được giữ để người dùng tham khảo, nhưng không
+    được gắn nhãn ``Tốt nhất`` vì hiện tại không thể mua ở mức giá đó.
+    """
+    priced = [
+        p
+        for p in records
+        if p.price_vnd > 0 and p.stock_status != StockStatus.OUT_OF_STOCK
+    ]
     if not priced:
         return None
     return min(priced, key=lambda p: p.price_vnd)
@@ -123,6 +131,13 @@ def _source_of(p: DrugPrice) -> str:
     return p.source.value if hasattr(p.source, "value") else str(p.source)
 
 
+def _price_text(p: DrugPrice) -> str:
+    """Giá dương để hiển thị; ``price_display='0đ'`` không phải giá hợp lệ."""
+    if p.price_vnd <= 0:
+        return ""
+    return p.price_display or f"{p.price_vnd:,}đ"
+
+
 def format_prices(records: list[DrugPrice]) -> str:
     """Chuỗi 'nguồn: giá; ...' — nguồn rẻ nhất được đánh dấu ★ ở đầu."""
     best = cheapest(records)
@@ -130,9 +145,10 @@ def format_prices(records: list[DrugPrice]) -> str:
     for p in records:
         src = _source_of(p)
         if p.stock_status == StockStatus.OUT_OF_STOCK:
-            label = f"{src}: hết hàng"
+            price = _price_text(p)
+            label = f"{src}: hết hàng · {price}" if price else f"{src}: hết hàng"
         else:
-            price = p.price_display or (f"{p.price_vnd:,}đ" if p.price_vnd else "")
+            price = _price_text(p)
             label = f"{src}: {price}" if price else src
         if best is not None and p is best:
             label = f"★{label}"
@@ -152,7 +168,8 @@ def _site_status(
     nhà SX/thời gian/link nên cần cả record gốc, không chỉ nhãn). Trả lời câu
     'sao thuốc này chỉ có 2 nguồn, các site khác thì sao':
     - Site trả về giá live → hiển thị giá (★ = rẻ nhất).
-    - Site trả tín hiệu hết tồn kho rõ ràng → 'hết hàng'.
+    - Site trả tín hiệu hết tồn kho rõ ràng → 'hết hàng', vẫn kèm giá nếu API
+      còn trả giá để người dùng tham khảo.
     - Site có trong catalog nhưng live-fetch không trả record → 'lỗi giá'.
     - Site KHÔNG có trong catalog (nhóm sản phẩm này, theo entity-resolution,
       không có listing ở site đó) → 'không có SP' (site thật sự không bán thuốc
@@ -166,7 +183,8 @@ def _site_status(
     )
     rec = by_source.get(source)
     if rec is not None and rec.stock_status == StockStatus.OUT_OF_STOCK:
-        return "hết hàng", rec
+        price = _price_text(rec)
+        return (f"hết hàng · {price}" if price else "hết hàng"), rec
     if rec is not None and rec.price_vnd > 0:
         price = rec.price_display or f"{rec.price_vnd:,}đ"
         label = f"★{price}" if best is not None and rec is best else price
@@ -208,8 +226,10 @@ def price_cell_display(label: str) -> str:
         return f"★ Tốt nhất · {label.removeprefix('★')}"
     if kind == "price":
         return f"Giá · {label}"
+    if kind == "out":
+        _status, separator, price = label.partition("·")
+        return f"× Hết hàng · {price.strip()}" if separator and price.strip() else "× Hết hàng"
     return {
-        "out": "× Hết hàng",
         "error": "! Lỗi giá",
         "missing": "— Không có SP",
         "hidden": "! Giá ẩn",
@@ -310,7 +330,6 @@ def product_detail_rows(
         label, rec = _site_status(site, catalog_sources, by_source, best)
         if never_crawled and label == "lỗi giá":
             label = "chưa update"
-        is_ok = rec is not None and rec.price_vnd > 0
         kind = status_kind(label)
         status = {
             "best": "Tốt nhất",
@@ -326,10 +345,15 @@ def product_detail_rows(
             if rec is not None and rec.crawled_at
             else "—"
         )
+        price = "—"
+        if rec is not None and rec.price_vnd > 0:
+            price = rec.price_display or f"{rec.price_vnd:,}đ"
+            if kind == "best":
+                price = f"★{price}"
         rows.append(
             {
                 "site": site["name"],
-                "price": label if is_ok else "—",
+                "price": price,
                 "status": status,
                 "updated": updated,
                 "url": url_by_source.get(source) or "—",
