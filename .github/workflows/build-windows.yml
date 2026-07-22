@@ -32,12 +32,12 @@ jobs:
           New-Item -ItemType Directory -Force -Path dist/config, dist/output | Out-Null
           Copy-Item config/accounts.example.yaml dist/config/accounts.yaml
           Copy-Item config/name_aliases.yaml dist/config/name_aliases.yaml
-          Copy-Item output/catalog_master_entity_resolved.xlsx dist/output/catalog_master_entity_resolved.xlsx
+          Copy-Item output/catalog_master.xlsx dist/output/catalog_master.xlsx
           $required = @(
             "dist/PharmaPrice.exe",
             "dist/config/accounts.yaml",
             "dist/config/name_aliases.yaml",
-            "dist/output/catalog_master_entity_resolved.xlsx"
+            "dist/output/catalog_master.xlsx"
           )
           foreach ($path in $required) {
             if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
